@@ -1,118 +1,82 @@
-"""mutagent.main -- Entry point for assembling and running the agent."""
+"""mutagent.main -- Bootstrap and Main entry point."""
 
 from __future__ import annotations
 
 import asyncio
-import json
+import importlib
 import os
-from pathlib import Path
+import sys
+from typing import TYPE_CHECKING
 
-from mutagent.agent import Agent
-from mutagent.client import LLMClient
-from mutagent.essential_tools import EssentialTools
-from mutagent.runtime.impl_loader import ImplLoader
-from mutagent.runtime.module_manager import ModuleManager
-from mutagent.selector import ToolSelector
+import mutagent
+from mutagent.config import Config
 
-
-_builtins_loaded = False
-
-_DEFAULT_MODEL = "claude-sonnet-4-20250514"
-_DEFAULT_BASE_URL = "https://api.anthropic.com"
+if TYPE_CHECKING:
+    from mutagent.agent import Agent
 
 
-def load_builtins() -> None:
-    """Load all builtin .impl.py files. Safe to call multiple times."""
-    global _builtins_loaded
-    if _builtins_loaded:
-        return
-    builtins_dir = Path(__file__).parent / "builtins"
-    loader = ImplLoader()
-    loader.load_all(builtins_dir, "mutagent.builtins")
-    _builtins_loaded = True
+class Main(mutagent.Object):
+    """Main entry point.  Override via ``@impl`` for custom UI (e.g. TUI).
 
-
-def load_config() -> dict[str, str]:
-    """Load configuration from mutagent.json (fallback) then environment variables (override).
-
-    mutagent.json format (same as Claude Code):
-        { "env": { "ANTHROPIC_AUTH_TOKEN": "...", ... } }
-
-    Returns:
-        Dict with keys: api_key, model, base_url.
-
-    Raises:
-        SystemExit: If no API key is found.
+    Attributes:
+        config: The loaded Config object.
+        agent: The Agent for this session, set by ``setup_agent()``.
     """
-    # 1. Read mutagent.json as fallback
-    file_env: dict[str, str] = {}
-    config_path = Path("mutagent.json")
-    if config_path.exists():
-        try:
-            data = json.loads(config_path.read_text(encoding="utf-8"))
-            file_env = data.get("env", {})
-        except (json.JSONDecodeError, KeyError):
-            pass
 
-    def _get(var_name: str, default: str = "") -> str:
-        """Env var > mutagent.json > default."""
-        return os.environ.get(var_name) or file_env.get(var_name) or default
+    config: Config
+    agent: Agent
 
-    api_key = _get("ANTHROPIC_AUTH_TOKEN")
-    if not api_key:
-        raise SystemExit(
-            "Error: ANTHROPIC_AUTH_TOKEN not set.\n"
-            "Set it via environment variable or in mutagent.json under env."
-        )
+    def setup_agent(self, system_prompt: str = "") -> Agent:
+        """Initialise the session Agent and store it in ``self.agent``.
 
-    return {
-        "api_key": api_key,
-        "model": _get("ANTHROPIC_MODEL", _DEFAULT_MODEL),
-        "base_url": _get("ANTHROPIC_BASE_URL", _DEFAULT_BASE_URL),
-    }
+        Override to customise component assembly (different tools,
+        different LLMClient, etc.).
+
+        Args:
+            system_prompt: System prompt for the agent.
+
+        Returns:
+            The created Agent instance (also stored as ``self.agent``).
+        """
+        ...
+
+    async def run(self) -> None:
+        """Run the agent session loop.
+
+        The default implementation calls ``setup_agent()`` then enters
+        a terminal REPL.  Override for TUI, Web, or other interfaces.
+        """
+        ...
 
 
-def create_agent(
-    api_key: str,
-    model: str = _DEFAULT_MODEL,
-    base_url: str = _DEFAULT_BASE_URL,
-    system_prompt: str = "",
-) -> Agent:
-    """Create a fully assembled Agent with all components wired up.
+def main() -> None:
+    """Bootstrap mutagent.  Not overridable.
 
-    This loads all builtin .impl.py files (if not already loaded),
-    creates the ModuleManager, EssentialTools, ToolSelector, LLMClient,
-    and Agent.
-
-    Args:
-        api_key: Anthropic API key.
-        model: Model identifier.
-        base_url: API base URL.
-        system_prompt: System prompt for the agent.
-
-    Returns:
-        A ready-to-use Agent instance.
+    Steps 1-5 are the bootstrap phase (plain Python, no @impl dependency).
+    Step 6 calls the overridable ``Main.run()``.
     """
-    load_builtins()
+    # 1. Load config (plain Python)
+    config = Config.load()
 
-    # Create components
-    module_manager = ModuleManager()
-    tools = EssentialTools(module_manager=module_manager)
-    selector = ToolSelector(essential_tools=tools)
-    client = LLMClient(model=model, api_key=api_key, base_url=base_url)
+    # 2. Set environment variables
+    for _config_dir, data in config._layers:
+        for key, value in data.get("env", {}).items():
+            os.environ[key] = value
 
-    if not system_prompt:
-        system_prompt = (
-            "You are a Python AI Agent with the ability to inspect, modify, "
-            "and run Python code at runtime. Use the available tools to help "
-            "the user with their tasks."
-        )
+    # 3. Extend sys.path (paths already resolved to absolute in Config.load)
+    for _config_dir, data in config._layers:
+        for p in data.get("path", []):
+            if p not in sys.path:
+                sys.path.insert(0, p)
 
-    agent = Agent(
-        client=client,
-        tool_selector=selector,
-        system_prompt=system_prompt,
-        messages=[],
-    )
+    # 4. Load builtins (registers all @impl, including Config and Main)
+    import mutagent.builtins  # noqa: F401
 
-    return agent
+    # 5. Load extension modules (may override @impl)
+    for _config_dir, data in config._layers:
+        for module_name in data.get("modules", []):
+            importlib.import_module(module_name)
+
+    # 6. Create Main and run (overridable)
+    entry = Main(config=config)
+    asyncio.run(entry.run())

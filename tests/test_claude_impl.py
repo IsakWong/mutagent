@@ -8,11 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mutagent.main import load_builtins
-from mutagent.messages import Message, Response, ToolCall, ToolResult, ToolSchema
+import mutagent.builtins  # noqa: F401  -- register all @impl
 
-# Load all impls (idempotent)
-load_builtins()
+from mutagent.messages import Message, Response, ToolCall, ToolResult, ToolSchema
 
 # Get the claude module from sys.modules (loaded by load_builtins via ImplLoader)
 _claude = sys.modules.get("mutagent.builtins.claude")

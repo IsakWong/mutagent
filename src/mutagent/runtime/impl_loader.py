@@ -68,6 +68,21 @@ class ImplLoader:
 
         return self._exec_module(module_name, source, str(impl_path))
 
+    @classmethod
+    def auto_load(cls, init_file: str, package_name: str) -> None:
+        """Auto-discover and load all ``.impl.py`` files in a package.
+
+        Intended to be called from a package's ``__init__.py``::
+
+            from mutagent.runtime.impl_loader import ImplLoader
+            ImplLoader.auto_load(__file__, __name__)
+
+        Args:
+            init_file: The ``__file__`` of the calling package's ``__init__.py``.
+            package_name: The ``__name__`` of the calling package.
+        """
+        cls().load_all(Path(init_file).parent, package_name)
+
     def load_all(
         self,
         package_path: str | Path,

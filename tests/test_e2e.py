@@ -8,13 +8,36 @@ import forwardpy
 
 import pytest
 
+import mutagent.builtins  # noqa: F401  -- register all @impl
+
 from mutagent.agent import Agent
 from mutagent.client import LLMClient
+from mutagent.config import Config
 from mutagent.essential_tools import EssentialTools
-from mutagent.main import create_agent
+from mutagent.main import Main
 from mutagent.messages import InputEvent, Message, Response, StreamEvent, ToolCall, ToolResult, ToolSchema
 from mutagent.runtime.module_manager import ModuleManager
 from mutagent.selector import ToolSelector
+
+
+def _create_test_agent(
+    api_key: str = "test-key",
+    model: str = "claude-sonnet-4-20250514",
+    base_url: str = "https://api.anthropic.com",
+    system_prompt: str = "",
+) -> Agent:
+    """Create an Agent for testing via Main.setup_agent()."""
+    config = Config(_layers=[(Path(), {
+        "models": {"test": {
+            "model_id": model,
+            "auth_token": api_key,
+            "base_url": base_url,
+        }},
+        "default_model": "test",
+    })])
+    entry = Main(config=config)
+    entry.setup_agent(system_prompt=system_prompt)
+    return entry.agent
 
 
 # ---------------------------------------------------------------------------
@@ -62,18 +85,18 @@ async def _collect_text(async_iter) -> str:
     return "".join(parts)
 
 
-class TestCreateAgent:
+class TestSetupAgent:
 
-    def test_create_agent_returns_agent(self):
-        agent = create_agent(api_key="test-key")
+    def test_setup_agent_returns_agent(self):
+        agent = _create_test_agent(api_key="test-key")
         assert isinstance(agent, Agent)
         assert agent.client.api_key == "test-key"
         assert agent.client.model == "claude-sonnet-4-20250514"
         assert agent.system_prompt
         assert agent.messages == []
 
-    def test_create_agent_custom_params(self):
-        agent = create_agent(
+    def test_setup_agent_custom_params(self):
+        agent = _create_test_agent(
             api_key="key",
             model="custom-model",
             system_prompt="Custom prompt",
@@ -87,7 +110,7 @@ class TestEndToEnd:
 
     @pytest.fixture
     def agent(self):
-        agent = create_agent(api_key="test-key")
+        agent = _create_test_agent(api_key="test-key")
         yield agent
 
     @pytest.mark.asyncio
@@ -270,7 +293,7 @@ class TestSelfEvolution:
 
     @pytest.fixture
     def agent(self):
-        agent = create_agent(api_key="test-key")
+        agent = _create_test_agent(api_key="test-key")
         yield agent
         # Cleanup: unregister override impls, remove virtual modules,
         # then re-load the original selector impl to restore original impls.

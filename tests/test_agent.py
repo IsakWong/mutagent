@@ -9,7 +9,6 @@ from mutagent.agent import Agent
 from mutagent.base import MutagentMeta
 from mutagent.client import LLMClient
 from mutagent.essential_tools import EssentialTools
-from mutagent.main import load_builtins
 from mutagent.messages import (
     InputEvent,
     Message,
@@ -23,8 +22,7 @@ from mutagent.runtime.module_manager import ModuleManager
 from mutagent.selector import ToolSelector
 from forwardpy.core import _DECLARED_METHODS
 
-# Load all impls (idempotent)
-load_builtins()
+import mutagent.builtins  # noqa: F401  -- register all @impl
 
 
 # ---------------------------------------------------------------------------

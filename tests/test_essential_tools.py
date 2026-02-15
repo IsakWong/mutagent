@@ -6,11 +6,9 @@ from pathlib import Path
 import pytest
 
 from mutagent.essential_tools import EssentialTools
-from mutagent.main import load_builtins
 from mutagent.runtime.module_manager import ModuleManager
 
-# Load all impls (idempotent)
-load_builtins()
+import mutagent.builtins  # noqa: F401  -- register all @impl
 
 
 @pytest.fixture
