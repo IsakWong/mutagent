@@ -84,6 +84,19 @@ class Response:
 
 
 @dataclass
+class InputEvent:
+    """A single event in a streaming input.
+
+    Attributes:
+        type: Event type. Currently only "user_message".
+        text: User message text (for user_message).
+    """
+
+    type: str
+    text: str = ""
+
+
+@dataclass
 class StreamEvent:
     """A single event in a streaming LLM response.
 
@@ -96,6 +109,7 @@ class StreamEvent:
             "tool_exec_start" - Agent begins executing a tool.
             "tool_exec_end"   - Agent finished executing a tool.
             "response_done"   - One LLM call completed; carries the full Response.
+            "turn_done"       - Agent finished processing one user message.
             "error"           - An error occurred.
         text: Text fragment (for text_delta).
         tool_call: Tool call info (for tool_use_start, tool_exec_start).

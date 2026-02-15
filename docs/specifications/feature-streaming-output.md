@@ -1,70 +1,78 @@
-# 交互模式流式输出 设计规范
+# 双向流式接口 设计规范
 
 **状态**：✅ 已完成
-**日期**：2026-02-14
+**日期**：2026-02-15
 **类型**：功能设计
 
 ## 1. 背景
 
-当前交互模式（`python -m mutagent`）中，Agent 调用 Claude API 时使用非流式请求，用户必须等待完整响应返回后才能看到输出。对于长回复或包含多轮工具调用的场景，用户体验较差——没有任何中间反馈，看起来像是卡住了。
+### Phase 1: 流式输出 [✅ 已完成]
 
-需要在三个层次引入流式支持：
-1. **LLMClient 层**：使用 Claude API 的 SSE streaming 协议获取增量响应
-2. **Agent 层**：将流式事件从 LLM 客户端传递到上层调用者
-3. **REPL 层**：实时将文本 token 输出到终端，并显示工具调用等中间状态
+已实现三层流式输出支持：LLMClient 层 SSE streaming、Agent 层事件透传、REPL 层实时渲染。所有层级使用统一的 `AsyncIterator[StreamEvent]` 返回类型。详见 2.1–2.6 节。
 
-### 当前调用链
+### Phase 2: 流式输入 + 单次 run 循环 [当前]
+
+当前 `Agent.run()` 接受单个字符串 `user_input`，每轮用户输入都需要外部循环重新调用 `agent.run()`：
 
 ```
-REPL ──await──▸ Agent.run() ──while──▸ Agent.step() ──await──▸ LLMClient.send_message()
-                                │                                      │
-                                │                                      └── aiohttp POST, await resp.json()
-                                └── handle_tool_calls()                     （阻塞等待完整响应）
+REPL while True:
+    user_input = input("> ")
+    async for event in agent.run(user_input):   ← 每轮调用一次
+        render(event)
 ```
+
+**问题**：
+- 多轮对话循环逻辑在 REPL 层（调用方），Agent 只处理单轮
+- 输入和输出接口不对称——输出是 `AsyncIterator[StreamEvent]`，输入是普通 `str`
+- 框架无法感知会话的生命周期（每次 `run` 调用都是独立的）
+
+**目标**：
+- 输入改为迭代器接口 `AsyncIterator[InputEvent]`，与输出对称
+- `agent.run()` 只调用一次，内部驱动完整多轮对话循环
+- 框架层面支持实时双向传输。当前实现中每轮传递一条完整消息即可，但接口设计为未来的实时流式输入（如语音转文字逐词输入）预留空间
 
 ### 目标调用链
 
 ```
-REPL ──async for──▸ Agent.run() ──async for──▸ Agent.step() ──async for──▸ LLMClient.send_message()
-  │                    │                           │                              │
-  │                    │                           │                              └── stream=True:  SSE 逐事件 yield
-  │                    │                           │                                  stream=False: 整包请求，包装为事件 yield
-  │                    │                           └── 透传 StreamEvent + 收集 response_done 驱动循环
-  │                    └── step 循环 + handle_tool_calls + yield 工具执行事件
-  └── 按事件类型渲染到终端
+REPL ──async for──▸ agent.run(input_stream)
+                        │
+                        ├── async for input_event in input_stream   ← 等待用户输入
+                        │       │
+                        │       └── InputEvent(type="user_message", text="...")
+                        │
+                        ├── while tool_use:
+                        │       async for event in step()            ← LLM 流式响应
+                        │           yield StreamEvent(text_delta / tool_* / response_done)
+                        │       handle_tool_calls()
+                        │           yield StreamEvent(tool_exec_*)
+                        │
+                        ├── yield StreamEvent(type="turn_done")      ← 一轮完毕
+                        │
+                        └── 回到顶部，等待下一个 input_event
 ```
 
 ## 2. 设计方案
 
-### 2.1 核心设计决策
+### Phase 1: 流式输出 [✅ 已完成]
 
-#### 统一接口模式
+> 以下 2.1–2.6 节为已完成的 Phase 1 设计，保留作为参考。
 
-**所有层级使用统一的 `AsyncIterator[StreamEvent]` 返回类型**，通过 `stream` 参数控制底层 HTTP 行为：
+#### 2.1 核心设计决策
+
+**统一接口模式**：所有层级使用统一的 `AsyncIterator[StreamEvent]` 返回类型，通过 `stream` 参数控制底层 HTTP 行为：
 
 - `stream=True`（默认）：LLM 客户端走 SSE 流式协议，逐 token yield 事件
 - `stream=False`：LLM 客户端走普通 HTTP 请求，将完整响应包装为少量事件 yield
 
 调用方始终使用 `async for event in ...` 消费，无需关心底层是否真正流式。
 
-**选择理由**：
-- 单一接口——Agent 层只有一套循环逻辑，不存在 `run`/`run_stream` 代码重复
-- 非流式包装开销可忽略（仅多创建 2-3 个 Python 对象 + yield）
-- 所有调用方使用统一模式，不需要在两套 API 间抉择
+**SSE 手动解析**：Claude API 的 SSE 格式固定，手动解析，不引入额外依赖。
 
-#### SSE 手动解析
+**工具调用显示（中等详细度）**：REPL 中显示工具名称 + 参数摘要 + 执行结果摘要。
 
-Claude API 的 SSE 格式固定（`event: xxx\ndata: {json}\n\n`），手动解析，不引入额外依赖。
+**错误处理（MVP）**：不做自动重试，通过 `StreamEvent(type="error")` 上报错误。
 
-#### 工具调用显示（中等详细度）
-
-REPL 中显示工具名称 + 参数摘要 + 执行结果摘要。
-
-#### 错误处理（MVP）
-
-不做自动重试，通过 `StreamEvent(type="error")` 上报错误，由用户决定是否重新发送。
-
-### 2.2 Claude API Streaming 协议
+#### 2.2 Claude API Streaming 协议
 
 Claude Messages API 支持 `stream: true` 参数，返回 SSE（Server-Sent Events）流。关键事件类型：
 
@@ -77,7 +85,7 @@ Claude Messages API 支持 `stream: true` 参数，返回 SSE（Server-Sent Even
 | `message_delta` | 消息级别更新 | `delta.stop_reason`, `usage.output_tokens` |
 | `message_stop` | 消息结束 | — |
 
-### 2.3 流式事件模型（`messages.py` 新增）
+#### 2.3 流式事件模型（`messages.py`）
 
 ```python
 @dataclass
@@ -93,19 +101,7 @@ class StreamEvent:
     error: str = ""                         # type="error" 时的错误信息
 ```
 
-事件类型说明：
-- `text_delta` — LLM 输出的文本增量
-- `tool_use_start` — LLM 开始构造一个工具调用（来自 SSE `content_block_start`）
-- `tool_use_delta` — 工具调用参数的 JSON 增量（来自 SSE `content_block_delta`）
-- `tool_use_end` — LLM 完成一个工具调用块（来自 SSE `content_block_stop`）
-- `tool_exec_start` — Agent 开始执行一个工具（Agent 层发出）
-- `tool_exec_end` — Agent 工具执行完成，携带结果（Agent 层发出）
-- `response_done` — 一次 LLM 调用完成，携带完整 Response
-- `error` — 错误事件
-
-### 2.4 LLMClient 层：修改 `send_message`
-
-**声明变更**（`client.py`）：
+#### 2.4 LLMClient 层：`send_message`
 
 ```python
 async def send_message(
@@ -118,25 +114,7 @@ async def send_message(
     ...
 ```
 
-**实现逻辑**（`claude.impl.py`）：
-
-`stream=True` 路径：
-1. payload 增加 `"stream": true`
-2. 使用 `resp.content` 逐行读取 SSE
-3. 解析 `event:` / `data:` 行，转换为 `StreamEvent` 并 yield
-4. 内部累积文本和工具调用，在 `message_stop` 时组装完整 `Response`
-5. yield `StreamEvent(type="response_done", response=response)`
-
-`stream=False` 路径：
-1. 与当前实现相同的普通 HTTP 请求
-2. 将完整响应包装为事件序列 yield：
-   - 若有文本 → `StreamEvent(type="text_delta", text=full_text)`
-   - 若有工具调用 → 每个 `StreamEvent(type="tool_use_start", tool_call=tc)`
-   - 最终 → `StreamEvent(type="response_done", response=response)`
-
-### 2.5 Agent 层：修改 `run` 和 `step`
-
-**声明变更**（`agent.py`）：
+#### 2.5 Agent 层：`run` 和 `step`（Phase 1 版本，将被 Phase 2 替代）
 
 ```python
 async def run(self, user_input: str, stream: bool = True) -> AsyncIterator[StreamEvent]:
@@ -146,62 +124,271 @@ async def step(self, stream: bool = True) -> AsyncIterator[StreamEvent]:
     ...
 ```
 
-**`step` 实现**：透传 `send_message` 的事件流。
+#### 2.6 REPL 层：流式渲染（Phase 1 版本，将被 Phase 2 替代）
 
-**`run` 实现**：
 ```python
-async def run(self, user_input, stream=True):
-    self.messages.append(Message(role="user", content=user_input))
+while True:
+    user_input = input("> ")
+    async for event in agent.run(user_input):
+        # 按事件类型渲染到终端
+```
+
+---
+
+### Phase 2: 流式输入 + 单次 run 循环
+
+#### 2.7 InputEvent 数据模型（`messages.py` 新增）
+
+```python
+@dataclass
+class InputEvent:
+    """流式输入中的单个事件。"""
+    type: str          # "user_message"
+    text: str = ""     # type="user_message" 时的用户消息文本
+```
+
+事件类型说明：
+- `user_message` — 一条完整的用户消息（当前唯一类型）
+- 未来可扩展：`cancel`（取消当前处理）、`input_delta`（实时流式输入片段）等
+
+#### 2.8 StreamEvent 新增 `turn_done` 事件类型
+
+在现有 `StreamEvent.type` 中新增 `"turn_done"` 类型，表示 Agent 完成了一轮用户消息的完整处理（包括所有工具调用循环），即将等待下一个输入。
+
+**为什么需要 `turn_done`**：
+
+在 Phase 1 中，`agent.run()` 在一轮结束后直接 return，调用方通过 `async for` 结束自然知道一轮完毕。但在 Phase 2 中 `agent.run()` 不再 return（它会继续等待下一个输入），因此需要显式事件通知调用方：
+
+- REPL 收到 `turn_done` 后可以打印换行、更新状态
+- 一轮可能包含多个 `response_done`（多次工具调用），`turn_done` 明确标识整轮结束
+- 程序化调用方可以用 `turn_done` 划分轮次边界
+
+`StreamEvent` 的 `type` 注释更新为：
+
+```python
+type: str  # "text_delta" | "tool_use_start" | "tool_use_delta" | "tool_use_end"
+           # | "tool_exec_start" | "tool_exec_end" | "response_done"
+           # | "turn_done" | "error"
+```
+
+`turn_done` 事件不携带额外数据，所有字段保持默认值。
+
+#### 2.9 Agent.run 签名变更
+
+**当前**（Phase 1）：
+
+```python
+async def run(self, user_input: str, stream: bool = True) -> AsyncIterator[StreamEvent]:
+```
+
+**变更为**（Phase 2）：
+
+```python
+async def run(
+    self,
+    input_stream: AsyncIterator[InputEvent],
+    stream: bool = True,
+) -> AsyncIterator[StreamEvent]:
+    """Run the agent conversation loop, consuming input events and yielding output events.
+
+    This is the main entry point. It consumes InputEvents from input_stream,
+    processes each through the LLM (with tool call loops), and yields
+    StreamEvents for each piece of incremental output.
+
+    The generator runs until input_stream is exhausted.
+
+    Args:
+        input_stream: Async iterator of user input events.
+        stream: Whether to use SSE streaming for HTTP requests.
+
+    Yields:
+        StreamEvent instances for each piece of incremental output.
+        A "turn_done" event is yielded after each user message is fully processed.
+    """
+    ...
+```
+
+**`step` 签名不变**——它仍然处理单次 LLM 调用，不涉及输入。
+
+#### 2.10 Agent.run 实现逻辑
+
+```python
+async def run(self, input_stream, stream=True):
+    async for input_event in input_stream:
+        if input_event.type == "user_message":
+            self.messages.append(Message(role="user", content=input_event.text))
+
+            while True:
+                response = None
+                async for event in self.step(stream=stream):
+                    yield event
+                    if event.type == "response_done":
+                        response = event.response
+                    elif event.type == "error":
+                        break
+
+                if response is None:
+                    yield StreamEvent(type="error", error="No response_done event received from LLM")
+                    break
+
+                self.messages.append(response.message)
+
+                if response.stop_reason == "tool_use" and response.message.tool_calls:
+                    results = []
+                    for call in response.message.tool_calls:
+                        yield StreamEvent(type="tool_exec_start", tool_call=call)
+                        result = await self.tool_selector.dispatch(call)
+                        yield StreamEvent(type="tool_exec_end", tool_call=call, tool_result=result)
+                        results.append(result)
+                    self.messages.append(Message(role="user", tool_results=results))
+                else:
+                    break  # end_turn，结束内层循环，等待下一个 input
+
+            yield StreamEvent(type="turn_done")
+```
+
+与 Phase 1 实现的关键差异：
+- 外层循环从 `input_stream` 消费输入，而非接受单个 `user_input` 字符串
+- 内层工具调用循环结束后 `break` 而非 `return`，回到外层等待下一轮输入
+- 每轮结束后 yield `turn_done` 事件
+
+#### 2.11 REPL 层适配（`__main__.py`）
+
+```python
+async def _input_stream():
+    """Async generator that reads user input from stdin."""
+    loop = asyncio.get_event_loop()
     while True:
-        response = None
-        async for event in self.step(stream=stream):
-            yield event
-            if event.type == "response_done":
-                response = event.response
+        try:
+            user_input = await loop.run_in_executor(None, input, "> ")
+        except (EOFError, KeyboardInterrupt):
+            return
+        if not user_input.strip():
+            return
+        yield InputEvent(type="user_message", text=user_input)
 
-        self.messages.append(response.message)
 
-        if response.stop_reason == "tool_use" and response.message.tool_calls:
-            # yield 工具执行事件
-            for call in response.message.tool_calls:
-                yield StreamEvent(type="tool_exec_start", tool_call=call)
-                result = await self.tool_selector.dispatch(call)
-                yield StreamEvent(type="tool_exec_end", tool_call=call, tool_result=result)
-                results.append(result)
-            self.messages.append(Message(role="user", tool_results=results))
-        else:
-            return  # async generator 结束
+async def _main():
+    config = load_config()
+    agent = create_agent(...)
+
+    print(f"mutagent ready  (model: {config['model']})")
+    print("Type your message. Empty line or Ctrl+C to exit.\n")
+
+    async for event in agent.run(_input_stream()):
+        if event.type == "text_delta":
+            print(event.text, end="", flush=True)
+        elif event.type == "tool_exec_start":
+            name = event.tool_call.name if event.tool_call else "?"
+            args_summary = _summarize_args(event.tool_call.arguments if event.tool_call else {})
+            if args_summary:
+                print(f"\n  [{name}({args_summary})]", flush=True)
+            else:
+                print(f"\n  [{name}]", flush=True)
+        elif event.type == "tool_exec_end":
+            if event.tool_result:
+                status = "error" if event.tool_result.is_error else "done"
+                summary = event.tool_result.content[:100]
+                if len(event.tool_result.content) > 100:
+                    summary += "..."
+                print(f"  -> [{status}] {summary}", flush=True)
+        elif event.type == "error":
+            print(f"\n[Error: {event.error}]", file=sys.stderr, flush=True)
+        elif event.type == "turn_done":
+            print()  # 轮次结束换行
+
+    print("Bye.")
 ```
 
-### 2.6 REPL 层：流式渲染（`__main__.py`）
+**核心变化**：
+- 外层 `while True` + `input()` 循环消失，替换为单次 `async for event in agent.run(_input_stream())`
+- 用户输入的读取移入 `_input_stream()` 异步生成器
+- `input()` 需要用 `run_in_executor` 包装为异步调用（因为在 async generator 上下文中）
+- 退出逻辑由 `_input_stream()` 的 return 控制——Ctrl+C / EOF / 空行时生成器结束，`agent.run` 的外层 `async for` 耗尽后自然结束
 
-```python
-async for event in agent.run(user_input):
-    if event.type == "text_delta":
-        print(event.text, end="", flush=True)
-    elif event.type == "tool_exec_start":
-        print(f"\n[调用工具: {event.tool_call.name}({_summarize_args(event.tool_call.arguments)})]",
-              flush=True)
-    elif event.type == "tool_exec_end":
-        summary = event.tool_result.content[:100]
-        status = "错误" if event.tool_result.is_error else "完成"
-        print(f"  → [{status}] {summary}", flush=True)
-    elif event.type == "error":
-        print(f"\n[错误: {event.error}]", file=sys.stderr, flush=True)
-    elif event.type == "response_done":
-        print()  # 最后换行
+#### 2.12 删除 `run_agent()` 便捷函数（`main.py`）
+
+`run_agent()` 当前未被使用，直接删除。后续有需求时再考虑封装。
+
+#### 2.13 执行流程分析：异步生成器的协作
+
+单次 `agent.run()` 的可行性依赖于 Python async generator 的协作式执行模型。以下是完整的执行流程：
+
 ```
+1. REPL: async for event in agent.run(_input_stream())
+2.   → agent.run.__anext__() 被调用
+3.   → agent.run 执行: async for input_event in input_stream
+4.     → _input_stream.__anext__() 被调用
+5.     → _input_stream: await run_in_executor(None, input, "> ")
+6.     → 用户看到 "> " 提示符，等待输入（整个 async 链挂起）
+7.     → 用户输入 "hello"
+8.     → _input_stream yields InputEvent(type="user_message", text="hello")
+9.   → agent.run 处理消息，调用 self.step()
+10.  → agent.run yields StreamEvent(type="text_delta", text="Hi")
+11.  → REPL 收到事件，print("Hi", end="")
+12.  → REPL 再次调用 agent.run.__anext__()
+13.  → agent.run 继续 yield 更多事件 ...
+14.  → agent.run yields StreamEvent(type="turn_done")
+15.  → REPL 收到 turn_done，print("\n")
+16.  → REPL 再次调用 agent.run.__anext__()
+17.  → agent.run 回到外层循环: async for input_event in input_stream
+18.  → 回到步骤 4，等待下一个输入
+```
+
+关键点：当 `agent.run` 在等待 `input_stream` 的下一个元素时，REPL 侧的 `async for` 也在等待 `agent.run` 的下一个 yield。两者通过 asyncio 事件循环协作——`input_stream` 通过 `run_in_executor` 在线程中等待 `input()`，不阻塞事件循环。
 
 ## 3. 已确认决策
+
+### Phase 1
 
 - **统一接口模式**：所有层级返回 `AsyncIterator[StreamEvent]`，`stream` 参数控制底层 HTTP 行为
 - **`stream` 默认 `True`**：交互模式是主要使用场景，程序化调用方可传 `stream=False`
 - **SSE 手动解析**：不引入额外依赖
 - **工具调用中等详细度**：工具名 + 参数摘要 + 结果摘要
 - **MVP 不自动重试**：错误通过 `StreamEvent(type="error")` 上报
-- **破坏性变更可接受**：项目 0.1.0 早期阶段，`main.py` 中 `run_agent()` 同步修改
+- **破坏性变更可接受**：项目 0.1.0 早期阶段
 
-## 4. 实施步骤清单
+### Phase 2
+
+- **InputEvent dataclass**：使用独立数据类型（非裸 `str`），与 `StreamEvent` 对称，预留扩展空间
+- **Ctrl+C = 退出会话**：方案 A，Ctrl+C 终止整个 `agent.run` generator。行为简单一致。后续如需"打断当前轮次但不退出"，可通过 `InputEvent(type="cancel")` 或 REPL 外层 `while True` 重建 `agent.run` 实现（见下方可行性说明）
+- **error 后继续**：error 事件 + turn_done 后继续等待下一个输入，不终止会话
+- **删除 `run_agent()`**：`main.py` 中的 `run_agent()` 当前未被使用，直接删除
+
+#### 关于"双击 Ctrl+C"可行性说明
+
+> 用户提问：是否可以实现第一次 Ctrl+C 打断 AI、第二次 Ctrl+C 退出程序？
+
+**可行**，但不在本次 Phase 2 范围内。实现思路：
+
+```python
+async def _main():
+    agent = create_agent(...)
+    while True:
+        try:
+            async for event in agent.run(_input_stream()):
+                ...
+            break  # input_stream 正常结束 → 退出
+        except KeyboardInterrupt:
+            print("\n[Interrupted]")
+            # agent 对象复用，messages 历史保留
+            # 下一轮创建新的 agent.run + _input_stream
+            continue
+```
+
+工作原理：
+- 第一次 Ctrl+C（LLM 处理中）→ `KeyboardInterrupt` 打断 `async for` → `agent.run` generator 被关闭 → 外层 `except` 捕获 → `continue` 重建 `agent.run(_input_stream())`
+- 第二次 Ctrl+C（等待输入时）→ `_input_stream()` 内部 `input()` 抛出 → generator return → `agent.run` 耗尽 → `break` → 正常退出
+
+**注意事项**：被中断时 `agent.messages` 可能处于不完整状态（已添加 user message 但无 assistant response）。重建 `agent.run` 后 LLM 会看到这条悬空的 user message 并继续回答，这在大多数情况下是可接受的行为。如需严格清理，可在 `except` 块中 pop 最后一条 user message。
+
+此方案可作为后续增强，不影响 Phase 2 核心设计。
+
+## 4. 待定问题
+
+（无——所有问题已在本轮确认，决策已合并至第 3 节。）
+
+## 5. 实施步骤清单
 
 ### 阶段一：数据模型与 LLMClient 流式支持 [✅ 已完成]
 - [x] **Task 1.1**: 在 `messages.py` 中新增 `StreamEvent` 数据类
@@ -264,25 +451,95 @@ async for event in agent.run(user_input):
 
 ---
 
+### 阶段五：流式输入 + 单次 run [✅ 已完成]
+
+- [x] **Task 5.1**: 在 `messages.py` 中新增 `InputEvent` 数据类
+  - [x] 定义 `InputEvent` dataclass（type, text）
+  - [x] 在 `StreamEvent.type` 文档注释中补充 `"turn_done"`
+  - 状态：✅ 已完成
+
+- [x] **Task 5.2**: 修改 `agent.py` 中 `run` 声明
+  - [x] 参数从 `user_input: str` 改为 `input_stream: AsyncIterator[InputEvent]`
+  - [x] 更新 docstring
+  - [x] 添加 `InputEvent` 的 TYPE_CHECKING 导入
+  - 状态：✅ 已完成
+
+- [x] **Task 5.3**: 修改 `agent.impl.py` 中 `run` 实现
+  - [x] 外层循环改为 `async for input_event in input_stream`
+  - [x] 内层保留 step + tool_calls 循环
+  - [x] 每轮结束 yield `StreamEvent(type="turn_done")`
+  - [x] error 事件后继续等待输入（不 return）
+  - 状态：✅ 已完成
+
+- [x] **Task 5.4**: 修改 `__main__.py` 适配新接口
+  - [x] 实现 `_input_stream()` 异步生成器（run_in_executor + input）
+  - [x] 移除外层 `while True` 循环
+  - [x] 改为单次 `async for event in agent.run(_input_stream())`
+  - [x] 处理 `turn_done` 事件
+  - 状态：✅ 已完成
+
+- [x] **Task 5.5**: 删除 `main.py` 中的 `run_agent()` 函数
+  - [x] 删除 `run_agent()` 函数定义
+  - [x] 确认无其他模块引用该函数（仅 CLAUDE.md 文档引用，已同步更新）
+  - 状态：✅ 已完成
+
+### 阶段六：测试适配 [✅ 已完成]
+
+- [x] **Task 6.1**: 适配 `test_agent.py`
+  - [x] 所有调用 `agent.run(user_input)` 的地方改为传入 InputEvent 迭代器
+  - [x] 新增 turn_done 事件断言
+  - [x] 新增多轮对话测试：连续多个 InputEvent 通过单次 run 处理
+  - [x] 新增 error 后继续测试：error 事件后能继续处理下一个输入
+  - 状态：✅ 已完成
+
+- [x] **Task 6.2**: 适配 `test_e2e.py`
+  - [x] 适配 e2e 测试到新的 `run(input_stream)` 签名
+  - 状态：✅ 已完成
+
+- [x] **Task 6.3**: 验证 `test_claude_impl.py` 无需改动
+  - [x] `send_message` 签名未变，测试全部通过
+  - 状态：✅ 已完成
+
+---
+
 ### 实施进度总结
 - ✅ **阶段一：数据模型与 LLMClient** — 100% 完成 (3/3 任务)
 - ✅ **阶段二：Agent 流式循环** — 100% 完成 (2/2 任务)
 - ✅ **阶段三：REPL 流式渲染** — 100% 完成 (2/2 任务)
 - ✅ **阶段四：测试验证** — 100% 完成 (3/3 任务)
+- ✅ **阶段五：流式输入 + 单次 run** — 100% 完成 (5/5 任务)
+- ✅ **阶段六：测试适配** — 100% 完成 (3/3 任务)
 
-**测试结果：164/165 通过，1 个 pre-existing 失败（版本号断言），2 个跳过（需 API key）**
+**Phase 1 测试结果：164/165 通过，1 个 pre-existing 失败（版本号断言），2 个跳过（需 API key）**
+**Phase 2 测试结果：166/167 通过，1 个 pre-existing 失败（版本号断言），2 个跳过（需 API key）**
 
-## 5. 测试验证
+## 6. 测试验证
 
-### 单元测试
+### Phase 1 [✅ 已完成]
+
+#### 单元测试
 - [x] `StreamEvent` 组装：text_delta、tool_use 系列事件、response_done
 - [x] 非流式包装：完整响应正确转为事件序列
 - [x] 错误场景：error 事件正确生成和传递
 - 执行结果：12/12 通过
 
-### 集成测试
+#### 集成测试
 - [x] LLMClient 非流式路径：成功、工具调用、API 错误
 - [x] 完整 e2e 流程：inspect → patch → run → save
 - [x] 工具调用流式事件序列正确性
 - [x] 自我演化流程（创建新工具并使用）
 - 执行结果：164/165 通过（1 个 pre-existing 版本号断言失败）
+
+### Phase 2 [✅ 已完成]
+
+#### 单元测试
+- [x] `InputEvent` 构造与字段验证（通过所有使用 InputEvent 的测试隐式覆盖）
+- [x] `agent.run(input_stream)` 单轮：单条 InputEvent → 事件序列包含 turn_done
+- [x] `agent.run(input_stream)` 多轮：多条 InputEvent → 每轮各自的事件序列 + turn_done
+- [x] error 后继续：error 事件后 agent 继续消费下一个 InputEvent
+- 执行结果：14/14 agent 测试通过（含 2 个新增多轮/错误恢复测试）
+
+#### 集成测试
+- [x] 适配已有 4 个 e2e 用例到新签名
+- [x] `test_claude_impl.py` 无需改动，全部通过
+- 执行结果：166/167 通过（1 个 pre-existing 版本号断言失败）

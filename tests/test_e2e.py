@@ -12,7 +12,7 @@ from mutagent.agent import Agent
 from mutagent.client import LLMClient
 from mutagent.essential_tools import EssentialTools
 from mutagent.main import create_agent
-from mutagent.messages import Message, Response, StreamEvent, ToolCall, ToolResult, ToolSchema
+from mutagent.messages import InputEvent, Message, Response, StreamEvent, ToolCall, ToolResult, ToolSchema
 from mutagent.runtime.module_manager import ModuleManager
 from mutagent.selector import ToolSelector
 
@@ -20,6 +20,11 @@ from mutagent.selector import ToolSelector
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+async def _single_input(text: str):
+    """Create an async iterator yielding a single user_message InputEvent."""
+    yield InputEvent(type="user_message", text=text)
+
 
 def _events_for(response: Response) -> list[StreamEvent]:
     """Build StreamEvents that a non-streaming send_message would yield for a Response."""
@@ -169,7 +174,7 @@ class TestEndToEnd:
             final_response,
         ])
 
-        result = await _collect_text(agent.run("Create a helper module with an add function"))
+        result = await _collect_text(agent.run(_single_input("Create a helper module with an add function")))
 
         # Verify final result
         assert "Done" in result
@@ -239,7 +244,7 @@ class TestEndToEnd:
 
         agent.client.send_message = _make_mock_send([patch_resp, view_resp, final_resp])
 
-        result = await _collect_text(agent.run("Show me the Greeter class"))
+        result = await _collect_text(agent.run(_single_input("Show me the Greeter class")))
 
         # Verify view_source returned the source
         view_result = agent.messages[4].tool_results[0]
@@ -255,7 +260,7 @@ class TestEndToEnd:
         )
         agent.client.send_message = _make_mock_send([response])
 
-        result = await _collect_text(agent.run("Hello"))
+        result = await _collect_text(agent.run(_single_input("Hello")))
         assert result == "Hello! I'm mutagent."
         assert len(agent.messages) == 2
 
@@ -443,7 +448,7 @@ class TestSelfEvolution:
             final_resp,
         ])
 
-        result = await _collect_text(agent.run("Create a factorial tool and use it"))
+        result = await _collect_text(agent.run(_single_input("Create a factorial tool and use it")))
 
         # Verify the full workflow completed
         assert "720" in result

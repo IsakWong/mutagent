@@ -4,6 +4,7 @@ import asyncio
 import sys
 
 from mutagent.main import create_agent, load_config
+from mutagent.messages import InputEvent
 
 SYSTEM_PROMPT = """\
 You are **mutagent**, a self-evolving Python AI Agent framework.
@@ -63,6 +64,19 @@ def _summarize_args(args: dict) -> str:
     return ", ".join(parts)
 
 
+async def _input_stream():
+    """Async generator that reads user input from stdin."""
+    loop = asyncio.get_event_loop()
+    while True:
+        try:
+            user_input = await loop.run_in_executor(None, input, "> ")
+        except (EOFError, KeyboardInterrupt):
+            return
+        if not user_input.strip():
+            return
+        yield InputEvent(type="user_message", text=user_input)
+
+
 async def _main() -> None:
     config = load_config()
     agent = create_agent(
@@ -75,48 +89,31 @@ async def _main() -> None:
     print(f"mutagent ready  (model: {config['model']})")
     print("Type your message. Empty line or Ctrl+C to exit.\n")
 
-    while True:
-        try:
-            user_input = input("> ")
-        except (EOFError, KeyboardInterrupt):
-            print("\nBye.")
-            break
+    async for event in agent.run(_input_stream()):
+        if event.type == "text_delta":
+            print(event.text, end="", flush=True)
+        elif event.type == "tool_exec_start":
+            name = event.tool_call.name if event.tool_call else "?"
+            args_summary = _summarize_args(
+                event.tool_call.arguments if event.tool_call else {}
+            )
+            if args_summary:
+                print(f"\n  [{name}({args_summary})]", flush=True)
+            else:
+                print(f"\n  [{name}]", flush=True)
+        elif event.type == "tool_exec_end":
+            if event.tool_result:
+                status = "error" if event.tool_result.is_error else "done"
+                summary = event.tool_result.content[:100]
+                if len(event.tool_result.content) > 100:
+                    summary += "..."
+                print(f"  -> [{status}] {summary}", flush=True)
+        elif event.type == "error":
+            print(f"\n[Error: {event.error}]", file=sys.stderr, flush=True)
+        elif event.type == "turn_done":
+            print()
 
-        if not user_input.strip():
-            print("Bye.")
-            break
-
-        try:
-            async for event in agent.run(user_input):
-                if event.type == "text_delta":
-                    print(event.text, end="", flush=True)
-                elif event.type == "tool_exec_start":
-                    name = event.tool_call.name if event.tool_call else "?"
-                    args_summary = _summarize_args(
-                        event.tool_call.arguments if event.tool_call else {}
-                    )
-                    if args_summary:
-                        print(f"\n  [{name}({args_summary})]", flush=True)
-                    else:
-                        print(f"\n  [{name}]", flush=True)
-                elif event.type == "tool_exec_end":
-                    if event.tool_result:
-                        status = "error" if event.tool_result.is_error else "done"
-                        summary = event.tool_result.content[:100]
-                        if len(event.tool_result.content) > 100:
-                            summary += "..."
-                        print(f"  -> [{status}] {summary}", flush=True)
-                elif event.type == "error":
-                    print(f"\n[Error: {event.error}]", file=sys.stderr, flush=True)
-                elif event.type == "response_done":
-                    pass  # newline printed after the loop
-            print()
-        except KeyboardInterrupt:
-            print("\n[Interrupted]")
-            print()
-        except Exception as e:
-            print(f"\nError: {e}", file=sys.stderr)
-            print()
+    print("Bye.")
 
 
 if __name__ == "__main__":

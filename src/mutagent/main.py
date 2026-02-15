@@ -116,26 +116,3 @@ def create_agent(
     )
 
     return agent
-
-
-async def run_agent(
-    api_key: str,
-    user_input: str,
-    **kwargs,
-) -> str:
-    """Convenience function to create an agent and run it with user input.
-
-    Args:
-        api_key: Anthropic API key.
-        user_input: The user's input message.
-        **kwargs: Additional arguments passed to create_agent.
-
-    Returns:
-        The agent's final text response.
-    """
-    agent = create_agent(api_key=api_key, **kwargs)
-    text_parts = []
-    async for event in agent.run(user_input, stream=False):
-        if event.type == "text_delta":
-            text_parts.append(event.text)
-    return "".join(text_parts)

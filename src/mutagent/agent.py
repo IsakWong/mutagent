@@ -8,7 +8,7 @@ import mutagent
 
 if TYPE_CHECKING:
     from mutagent.client import LLMClient
-    from mutagent.messages import StreamEvent, ToolCall, ToolResult
+    from mutagent.messages import InputEvent, StreamEvent, ToolCall, ToolResult
     from mutagent.selector import ToolSelector
 
 
@@ -32,19 +32,23 @@ class Agent(mutagent.Object):
     messages: list
 
     async def run(
-        self, user_input: str, stream: bool = True
+        self, input_stream: AsyncIterator[InputEvent], stream: bool = True
     ) -> AsyncIterator[StreamEvent]:
-        """Run the agent with user input, yielding streaming events.
+        """Run the agent conversation loop, consuming input events and yielding output events.
 
-        This is the main entry point. It adds the user message, then
-        loops step/handle_tool_calls until the LLM produces an end_turn.
+        This is the main entry point. It consumes InputEvents from input_stream,
+        processes each through the LLM (with tool call loops), and yields
+        StreamEvents for each piece of incremental output.
+
+        The generator runs until input_stream is exhausted.
 
         Args:
-            user_input: The user's input message.
+            input_stream: Async iterator of user input events.
             stream: Whether to use SSE streaming for the HTTP request.
 
         Yields:
             StreamEvent instances for each piece of incremental output.
+            A "turn_done" event is yielded after each user message is fully processed.
         """
         ...
 

@@ -4,50 +4,59 @@ from typing import AsyncIterator
 
 import mutagent
 from mutagent.agent import Agent
-from mutagent.messages import Message, StreamEvent, ToolCall, ToolResult
+from mutagent.messages import InputEvent, Message, StreamEvent, ToolCall, ToolResult
 
 
 @mutagent.impl(Agent.run)
 async def run(
-    self: Agent, user_input: str, stream: bool = True
+    self: Agent, input_stream: AsyncIterator[InputEvent], stream: bool = True
 ) -> AsyncIterator[StreamEvent]:
-    """Run the agent loop until end_turn, yielding streaming events."""
-    # Add user message
-    self.messages.append(Message(role="user", content=user_input))
+    """Run the agent conversation loop, consuming input events and yielding output events."""
+    async for input_event in input_stream:
+        if input_event.type == "user_message":
+            self.messages.append(Message(role="user", content=input_event.text))
 
-    while True:
-        response = None
-        async for event in self.step(stream=stream):
-            yield event
-            if event.type == "response_done":
-                response = event.response
-            elif event.type == "error":
-                return  # Stop on error
+            while True:
+                response = None
+                got_error = False
+                async for event in self.step(stream=stream):
+                    yield event
+                    if event.type == "response_done":
+                        response = event.response
+                    elif event.type == "error":
+                        got_error = True
+                        break
 
-        if response is None:
-            yield StreamEvent(
-                type="error", error="No response_done event received from LLM"
-            )
-            return
+                if got_error:
+                    break
 
-        # Add assistant message to history
-        self.messages.append(response.message)
+                if response is None:
+                    yield StreamEvent(
+                        type="error",
+                        error="No response_done event received from LLM",
+                    )
+                    break
 
-        if response.stop_reason == "tool_use" and response.message.tool_calls:
-            # Handle tool calls, yielding execution events
-            results = []
-            for call in response.message.tool_calls:
-                yield StreamEvent(type="tool_exec_start", tool_call=call)
-                result = await self.tool_selector.dispatch(call)
-                yield StreamEvent(
-                    type="tool_exec_end", tool_call=call, tool_result=result
-                )
-                results.append(result)
-            # Add tool results as a user message
-            self.messages.append(Message(role="user", tool_results=results))
-        else:
-            # end_turn or no tool calls — done
-            return
+                # Add assistant message to history
+                self.messages.append(response.message)
+
+                if response.stop_reason == "tool_use" and response.message.tool_calls:
+                    # Handle tool calls, yielding execution events
+                    results = []
+                    for call in response.message.tool_calls:
+                        yield StreamEvent(type="tool_exec_start", tool_call=call)
+                        result = await self.tool_selector.dispatch(call)
+                        yield StreamEvent(
+                            type="tool_exec_end", tool_call=call, tool_result=result
+                        )
+                        results.append(result)
+                    # Add tool results as a user message
+                    self.messages.append(Message(role="user", tool_results=results))
+                else:
+                    # end_turn or no tool calls — done with this turn
+                    break
+
+            yield StreamEvent(type="turn_done")
 
 
 @mutagent.impl(Agent.step)
