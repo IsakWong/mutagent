@@ -2,6 +2,6 @@
 
 __version__ = "0.1.0"
 
-from mutobj import Declaration, impl
+from mutobj import Declaration, impl, register_module_impls, unregister_module_impls
 
-__all__ = ["Declaration", "impl"]
+__all__ = ["Declaration", "impl", "register_module_impls", "unregister_module_impls"]

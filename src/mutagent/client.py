@@ -54,4 +54,10 @@ class LLMClient(mutagent.Declaration):
         Yields:
             StreamEvent instances.
         """
-        ...
+        return claude_impl.send_message(
+            self, messages, tools, system_prompt=system_prompt, stream=stream
+        )
+
+
+from .builtins import claude_impl
+mutagent.register_module_impls(claude_impl)

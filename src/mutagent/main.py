@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-import importlib
-import os
-import sys
 from typing import TYPE_CHECKING
-
-from pathlib import Path
 
 import mutagent
 from mutagent.config import Config
@@ -38,7 +33,7 @@ class App(mutagent.Declaration):
         Args:
             config_path: Path to the config file (not used by default).
         """
-        ...
+        return main_impl.load_config(self, config_path)
 
     def setup_agent(self, system_prompt: str = "") -> Agent:
         """Initialise the session Agent and store it in ``self.agent``.
@@ -52,11 +47,11 @@ class App(mutagent.Declaration):
         Returns:
             The created Agent instance (also stored as ``self.agent``).
         """
-        ...
+        return main_impl.setup_agent(self, system_prompt=system_prompt)
 
     def input_stream(self):
         """Generator that reads user input from stdin."""
-        ...
+        return main_impl.input_stream(self)
 
     def handle_stream_event(self, event: StreamEvent):
         """Handle an output event from the agent.
@@ -67,7 +62,7 @@ class App(mutagent.Declaration):
         Args:
             event: The event emitted by the agent.
         """
-        ...
+        return main_impl.handle_stream_event(self, event)
 
     def confirm_exit(self) -> bool:
         """Ask user to confirm exit after an interruption.
@@ -78,7 +73,7 @@ class App(mutagent.Declaration):
         Returns:
             True if the user confirms they want to exit, False to continue.
         """
-        ...
+        return main_impl.confirm_exit(self)
 
     def run(self) -> None:
         """Run the agent session loop.
@@ -86,19 +81,16 @@ class App(mutagent.Declaration):
         The default implementation calls ``setup_agent()`` then enters
         a terminal REPL.  Override for TUI, Web, or other interfaces.
         """
-        ...
+        return main_impl.run(self)
 
 
 def main() -> None:
     """Bootstrap mutagent.  Not overridable.
     """
-    # 1. Load built-in implementations (and any auto-discovered ones)
-    from . import builtins
-    builtins.load()
-
-    # 2. Create app
     app = App()
     app.load_config(".mutagent/config.json")
-
-    # 3. Run app
     app.run()
+
+
+from .builtins import main_impl
+mutagent.register_module_impls(main_impl)

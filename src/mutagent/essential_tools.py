@@ -34,7 +34,7 @@ class EssentialTools(mutagent.Declaration):
         Returns:
             A formatted string showing the module structure.
         """
-        ...
+        return inspect_module_impl.inspect_module(self, module_path=module_path, depth=depth)
 
     def view_source(self, target: str) -> str:
         """View the source code of a module, class, or function.
@@ -45,7 +45,7 @@ class EssentialTools(mutagent.Declaration):
         Returns:
             The source code as a string.
         """
-        ...
+        return view_source_impl.view_source(self, target)
 
     def patch_module(self, module_path: str, source: str) -> str:
         """Patch a module with new source code at runtime.
@@ -57,7 +57,7 @@ class EssentialTools(mutagent.Declaration):
         Returns:
             A status message indicating success.
         """
-        ...
+        return patch_module_impl.patch_module(self, module_path, source)
 
     def save_module(self, module_path: str, file_path: str = "") -> str:
         """Persist a patched module to the filesystem.
@@ -69,7 +69,7 @@ class EssentialTools(mutagent.Declaration):
         Returns:
             A status message with the written file path.
         """
-        ...
+        return save_module_impl.save_module(self, module_path, file_path)
 
     def run_code(self, code: str) -> str:
         """Execute a Python code snippet and return the result.
@@ -80,4 +80,12 @@ class EssentialTools(mutagent.Declaration):
         Returns:
             Captured stdout/stderr and return value, or error traceback.
         """
-        ...
+        return run_code_impl.run_code(self, code)
+
+
+from mutagent.builtins  import (
+    inspect_module_impl, view_source_impl, patch_module_impl, save_module_impl, run_code_impl
+)
+mutagent.register_module_impls(
+    inspect_module_impl, view_source_impl, patch_module_impl, save_module_impl, run_code_impl
+)

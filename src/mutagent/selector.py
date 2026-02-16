@@ -36,7 +36,7 @@ class ToolSelector(mutagent.Declaration):
         Returns:
             List of ToolSchema objects describing available tools.
         """
-        ...
+        return selector_impl.get_tools(self, context)
 
     def dispatch(self, tool_call: ToolCall) -> ToolResult:
         """Route a tool call to the appropriate implementation and execute it.
@@ -46,5 +46,9 @@ class ToolSelector(mutagent.Declaration):
 
         Returns:
             The result of executing the tool.
+
         """
-        ...
+        return selector_impl.dispatch(self, tool_call)
+
+from .builtins import selector_impl
+mutagent.register_module_impls(selector_impl)

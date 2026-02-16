@@ -50,7 +50,7 @@ class Agent(mutagent.Declaration):
             StreamEvent instances for each piece of incremental output.
             A "turn_done" event is yielded after each user message is fully processed.
         """
-        ...
+        return agent_impl.run(self, input_stream, stream=stream)
 
     def step(self, stream: bool = True) -> Iterator[StreamEvent]:
         """Execute a single LLM call, yielding streaming events.
@@ -61,7 +61,7 @@ class Agent(mutagent.Declaration):
         Yields:
             StreamEvent instances from the LLM client.
         """
-        ...
+        return agent_impl.step(self, stream=stream)
 
     def handle_tool_calls(self, tool_calls: list[ToolCall]) -> list[ToolResult]:
         """Execute tool calls and return results.
@@ -72,4 +72,8 @@ class Agent(mutagent.Declaration):
         Returns:
             List of tool results.
         """
-        ...
+        return agent_impl.handle_tool_calls(self, tool_calls)
+
+
+from .builtins import agent_impl
+mutagent.register_module_impls(agent_impl)

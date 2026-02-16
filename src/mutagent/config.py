@@ -39,7 +39,7 @@ class Config(mutagent.Declaration):
         Args:
             config_path: Relative path to the config file (e.g. ".mutagent/config.json").
         """
-        ...
+        return config_impl.load(cls, config_path)
 
     def get(self, path: str, default: Any = None, *, merge: bool = True) -> Any:
         """Get a configuration value by key path.
@@ -57,7 +57,7 @@ class Config(mutagent.Declaration):
         Returns:
             The resolved configuration value, or *default*.
         """
-        ...
+        return config_impl.get(self, path, default=default, merge=merge)
 
     def get_model(self, name: str | None = None) -> dict:
         """Get a model configuration dict by name.
@@ -72,7 +72,7 @@ class Config(mutagent.Declaration):
         Raises:
             SystemExit: If the model is not found or auth_token is empty.
         """
-        ...
+        return config_impl.get_model(self, name)
 
     def section(self, key: str) -> Config:
         """Get a sub-configuration view for a top-level key.
@@ -87,4 +87,8 @@ class Config(mutagent.Declaration):
         Returns:
             A new Config scoped to that section.
         """
-        ...
+        return config_impl.section(self, key)
+
+
+from mutagent.builtins import config_impl
+mutagent.register_module_impls(config_impl)
