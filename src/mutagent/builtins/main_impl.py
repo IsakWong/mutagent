@@ -155,16 +155,16 @@ def input_stream(self):
     """Generator that reads user input from stdin."""
     while True:
         try:
-            user_input = input("> ")
-            while not user_input.strip():
-                user_input = input("")
+            while True:
+               user_input = input("> ").strip()
+               if user_input:
+                    break
             yield InputEvent(type="user_message", text=user_input)
         except KeyboardInterrupt:
-            pass
+            if self.confirm_exit():
+                print("Bye.")
+                return
         except EOFError:
-            return
-        if self.confirm_exit():
-            print("Bye.")
             return
 
 
