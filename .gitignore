@@ -26,6 +26,10 @@ env/
 Thumbs.db
 nul
 
+# AI
+/CLAUDE.md
+/.claude
+
 # Testing
 .pytest_cache/
 .coverage
