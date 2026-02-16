@@ -15,6 +15,7 @@ from mutagent.config import Config
 
 if TYPE_CHECKING:
     from mutagent.agent import Agent
+    from mutagent.messages import StreamEvent
 
 
 class App(mutagent.Object):
@@ -51,6 +52,32 @@ class App(mutagent.Object):
 
         Returns:
             The created Agent instance (also stored as ``self.agent``).
+        """
+        ...
+
+    async def input_stream(self):
+        """Async generator that reads user input from stdin."""
+        ...
+
+    async def handle_stream_event(self, event: StreamEvent):
+        """Handle an output event from the agent.
+
+        Override to control how events are displayed to the user (e.g. TUI,
+        Web, etc.).  The default implementation prints to console.
+
+        Args:
+            event: The event emitted by the agent.
+        """
+        ...
+
+    def confirm_exit(self) -> bool:
+        """Ask user to confirm exit after an interruption.
+
+        Override to control how exit confirmation is handled (e.g. TUI dialog,
+        web prompt, etc.).  The default implementation prompts in console.
+
+        Returns:
+            True if the user confirms they want to exit, False to continue.
         """
         ...
 
