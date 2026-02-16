@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from mutagent.selector import ToolSelector
 
 
-class Agent(mutagent.Object):
+class Agent(mutagent.Declaration):
     """Agent manages the conversation loop with an LLM.
 
     The agent sends messages to the LLM, handles tool calls by dispatching

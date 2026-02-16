@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from mutagent.runtime.module_manager import ModuleManager
 
 
-class EssentialTools(mutagent.Object):
+class EssentialTools(mutagent.Declaration):
     """Essential tool primitives -- the minimal operation set for Agent evolution.
 
     Each method is an independent tool declaration. An Agent can override

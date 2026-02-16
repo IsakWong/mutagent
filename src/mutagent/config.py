@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from mutagent.agent import Agent
 
 
-class Config(mutagent.Object):
+class Config(mutagent.Declaration):
     """Extensible configuration object.
 
     Preserves per-level raw data and assembles merged results on access.

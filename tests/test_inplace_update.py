@@ -1,17 +1,16 @@
-"""Tests for MutagentMeta in-place class redefinition."""
+"""Tests for in-place class redefinition (via mutobj DeclarationMeta)."""
 
 import linecache
 import pytest
 import mutagent
-from mutagent.base import MutagentMeta
-from forwardpy.core import _method_registry, _attribute_registry, _DECLARED_METHODS
+from mutobj.core import _method_registry, _attribute_registry, _DECLARED_METHODS, _class_registry
 
 
 def _exec_class(source: str, module_name: str = "test_virtual"):
     """Helper: exec source code that defines a class, simulating module re-execution.
 
     Injects source into linecache so inspect.getsource() works,
-    which is required for forwardpy's stub method detection.
+    which is required for mutobj's stub method detection.
     """
     filename = f"mutagent://{module_name}"
     # Inject into linecache so inspect.getsource() works for stub detection
@@ -27,29 +26,29 @@ def _exec_class(source: str, module_name: str = "test_virtual"):
 class TestInPlaceRedefinition:
 
     def test_redefinition_preserves_identity(self):
-        g1 = _exec_class("class Foo(mutagent.Object):\n    x: int")
+        g1 = _exec_class("class Foo(mutagent.Declaration):\n    x: int")
         cls1 = g1["Foo"]
         id1 = id(cls1)
 
-        g2 = _exec_class("class Foo(mutagent.Object):\n    x: int\n    y: str")
+        g2 = _exec_class("class Foo(mutagent.Declaration):\n    x: int\n    y: str")
         cls2 = g2["Foo"]
 
         assert cls1 is cls2
         assert id(cls2) == id1
 
     def test_redefinition_updates_annotations(self):
-        g1 = _exec_class("class Bar(mutagent.Object):\n    x: int")
+        g1 = _exec_class("class Bar(mutagent.Declaration):\n    x: int")
         cls = g1["Bar"]
         assert "x" in cls.__annotations__
 
-        g2 = _exec_class("class Bar(mutagent.Object):\n    x: int\n    y: str")
+        g2 = _exec_class("class Bar(mutagent.Declaration):\n    x: int\n    y: str")
         cls2 = g2["Bar"]
         assert cls is cls2
         assert "y" in cls.__annotations__
 
     def test_redefinition_updates_stub_methods(self):
         g1 = _exec_class(
-            "class Svc(mutagent.Object):\n"
+            "class Svc(mutagent.Declaration):\n"
             "    def alpha(self) -> str: ...\n"
         )
         cls = g1["Svc"]
@@ -57,7 +56,7 @@ class TestInPlaceRedefinition:
         assert "alpha" in declared
 
         g2 = _exec_class(
-            "class Svc(mutagent.Object):\n"
+            "class Svc(mutagent.Declaration):\n"
             "    def beta(self) -> str: ...\n"
         )
         cls2 = g2["Svc"]
@@ -68,14 +67,14 @@ class TestInPlaceRedefinition:
 
     def test_redefinition_removes_deleted_attrs(self):
         g1 = _exec_class(
-            "class Rm(mutagent.Object):\n"
+            "class Rm(mutagent.Declaration):\n"
             "    x: int\n"
             "    y: str\n"
         )
         cls = g1["Rm"]
 
         g2 = _exec_class(
-            "class Rm(mutagent.Object):\n"
+            "class Rm(mutagent.Declaration):\n"
             "    x: int\n"
         )
         cls2 = g2["Rm"]
@@ -85,13 +84,13 @@ class TestInPlaceRedefinition:
         assert "x" in annotations
 
     def test_isinstance_works_after_redefinition(self):
-        g1 = _exec_class("class Inst(mutagent.Object):\n    v: int")
+        g1 = _exec_class("class Inst(mutagent.Declaration):\n    v: int")
         cls = g1["Inst"]
         obj = cls(v=10)
         assert isinstance(obj, cls)
 
         # Redefine
-        g2 = _exec_class("class Inst(mutagent.Object):\n    v: int\n    w: str")
+        g2 = _exec_class("class Inst(mutagent.Declaration):\n    v: int\n    w: str")
         cls2 = g2["Inst"]
 
         assert cls is cls2
@@ -100,7 +99,7 @@ class TestInPlaceRedefinition:
 
     def test_impl_survives_redefinition(self):
         g1 = _exec_class(
-            "class Worker(mutagent.Object):\n"
+            "class Worker(mutagent.Declaration):\n"
             "    def work(self) -> str: ...\n"
         )
         cls = g1["Worker"]
@@ -114,7 +113,7 @@ class TestInPlaceRedefinition:
 
         # Redefine the class (adds a new stub method)
         g2 = _exec_class(
-            "class Worker(mutagent.Object):\n"
+            "class Worker(mutagent.Declaration):\n"
             "    def work(self) -> str: ...\n"
             "    def rest(self) -> str: ...\n"
         )
@@ -130,7 +129,7 @@ class TestInPlaceRedefinition:
 
     def test_existing_instances_see_new_stubs(self):
         g1 = _exec_class(
-            "class Live(mutagent.Object):\n"
+            "class Live(mutagent.Declaration):\n"
             "    def old_method(self) -> str: ...\n"
         )
         cls = g1["Live"]
@@ -138,7 +137,7 @@ class TestInPlaceRedefinition:
 
         # Redefine with a different method
         g2 = _exec_class(
-            "class Live(mutagent.Object):\n"
+            "class Live(mutagent.Declaration):\n"
             "    def new_method(self) -> str: ...\n"
         )
 
@@ -146,15 +145,15 @@ class TestInPlaceRedefinition:
         assert hasattr(obj, "new_method")
 
     def test_different_module_creates_separate_class(self):
-        g1 = _exec_class("class Same(mutagent.Object):\n    pass", "mod_a")
-        g2 = _exec_class("class Same(mutagent.Object):\n    pass", "mod_b")
+        g1 = _exec_class("class Same(mutagent.Declaration):\n    pass", "mod_a")
+        g2 = _exec_class("class Same(mutagent.Declaration):\n    pass", "mod_b")
 
         assert g1["Same"] is not g2["Same"]
 
     def test_different_qualname_creates_separate_class(self):
         g1 = _exec_class(
-            "class Outer(mutagent.Object):\n"
-            "    class Inner(mutagent.Object):\n"
+            "class Outer(mutagent.Declaration):\n"
+            "    class Inner(mutagent.Declaration):\n"
             "        pass\n"
         )
         outer = g1["Outer"]
@@ -162,15 +161,15 @@ class TestInPlaceRedefinition:
         assert outer is not inner
 
     def test_first_definition_registers(self):
-        g = _exec_class("class Fresh(mutagent.Object):\n    pass", "test_fresh_mod")
+        g = _exec_class("class Fresh(mutagent.Declaration):\n    pass", "test_fresh_mod")
         cls = g["Fresh"]
         key = ("test_fresh_mod", "Fresh")
-        assert key in MutagentMeta._class_registry
-        assert MutagentMeta._class_registry[key] is cls
+        assert key in _class_registry
+        assert _class_registry[key] is cls
 
-    def test_forwardpy_registries_migrated(self):
+    def test_registries_migrated(self):
         g1 = _exec_class(
-            "class Migr(mutagent.Object):\n"
+            "class Migr(mutagent.Declaration):\n"
             "    x: int\n"
             "    def process(self) -> str: ...\n"
         )
@@ -180,7 +179,7 @@ class TestInPlaceRedefinition:
 
         # Redefine
         g2 = _exec_class(
-            "class Migr(mutagent.Object):\n"
+            "class Migr(mutagent.Declaration):\n"
             "    x: int\n"
             "    y: str\n"
             "    def process(self) -> str: ...\n"

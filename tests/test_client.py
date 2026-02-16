@@ -3,17 +3,16 @@
 import pytest
 import mutagent
 from mutagent.client import LLMClient
-from mutagent.base import MutagentMeta
-from forwardpy.core import _DECLARED_METHODS
+from mutobj.core import DeclarationMeta, _DECLARED_METHODS
 
 
 class TestLLMClientDeclaration:
 
-    def test_inherits_from_mutagent_object(self):
-        assert issubclass(LLMClient, mutagent.Object)
+    def test_inherits_from_mutagent_declaration(self):
+        assert issubclass(LLMClient, mutagent.Declaration)
 
-    def test_uses_mutagent_meta(self):
-        assert isinstance(LLMClient, MutagentMeta)
+    def test_uses_declaration_meta(self):
+        assert isinstance(LLMClient, DeclarationMeta)
 
     def test_has_declared_attributes(self):
         client = LLMClient(

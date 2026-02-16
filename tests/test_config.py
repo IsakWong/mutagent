@@ -10,7 +10,7 @@ import pytest
 import mutagent
 import mutagent.builtins  # noqa: F401  -- register all @impl
 
-from mutagent.base import MutagentMeta
+from mutobj.core import DeclarationMeta, _DECLARED_METHODS
 from mutagent.config import Config
 
 # Helper functions live in the impl module, not the declaration
@@ -18,7 +18,6 @@ from mutagent.builtins import config_impl as _config_impl
 
 _load_json = _config_impl._load_json
 _resolve_paths_inplace = _config_impl._resolve_paths_inplace
-from forwardpy.core import _DECLARED_METHODS
 
 
 # ---------------------------------------------------------------------------
@@ -27,11 +26,11 @@ from forwardpy.core import _DECLARED_METHODS
 
 class TestConfigDeclaration:
 
-    def test_inherits_from_mutagent_object(self):
-        assert issubclass(Config, mutagent.Object)
+    def test_inherits_from_mutagent_declaration(self):
+        assert issubclass(Config, mutagent.Declaration)
 
-    def test_uses_mutagent_meta(self):
-        assert isinstance(Config, MutagentMeta)
+    def test_uses_declaration_meta(self):
+        assert isinstance(Config, DeclarationMeta)
 
     def test_declared_methods(self):
         declared = getattr(Config, _DECLARED_METHODS, set())

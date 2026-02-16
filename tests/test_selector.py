@@ -5,12 +5,11 @@ from pathlib import Path
 import pytest
 
 import mutagent
-from mutagent.base import MutagentMeta
 from mutagent.essential_tools import EssentialTools
 from mutagent.messages import ToolCall, ToolResult, ToolSchema
 from mutagent.runtime.module_manager import ModuleManager
 from mutagent.selector import ToolSelector
-from forwardpy.core import _DECLARED_METHODS
+from mutobj.core import DeclarationMeta, _DECLARED_METHODS
 
 import mutagent.builtins  # noqa: F401  -- register all @impl
 
@@ -19,11 +18,11 @@ from mutagent.builtins.selector_impl import make_schema_from_method
 
 class TestEssentialToolsDeclaration:
 
-    def test_inherits_from_mutagent_object(self):
-        assert issubclass(EssentialTools, mutagent.Object)
+    def test_inherits_from_mutagent_declaration(self):
+        assert issubclass(EssentialTools, mutagent.Declaration)
 
-    def test_uses_mutagent_meta(self):
-        assert isinstance(EssentialTools, MutagentMeta)
+    def test_uses_declaration_meta(self):
+        assert isinstance(EssentialTools, DeclarationMeta)
 
     def test_declared_methods(self):
         declared = getattr(EssentialTools, _DECLARED_METHODS, set())
@@ -39,8 +38,8 @@ class TestEssentialToolsDeclaration:
 
 class TestToolSelectorDeclaration:
 
-    def test_inherits_from_mutagent_object(self):
-        assert issubclass(ToolSelector, mutagent.Object)
+    def test_inherits_from_mutagent_declaration(self):
+        assert issubclass(ToolSelector, mutagent.Declaration)
 
     def test_declared_methods(self):
         declared = getattr(ToolSelector, _DECLARED_METHODS, set())

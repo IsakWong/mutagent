@@ -56,7 +56,7 @@ class ModuleManager:
         Returns:
             The patched/created module object
         """
-        from forwardpy import unregister_module_impls
+        from mutobj import unregister_module_impls
 
         # Bump version
         version = self._versions.get(module_path, 0) + 1

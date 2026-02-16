@@ -24,7 +24,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "forwardpy>=0.3.0",
+    "mutobj>=0.4.0",
     "requests>=2.31",
 ]
 

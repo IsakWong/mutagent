@@ -6,7 +6,6 @@ import pytest
 
 import mutagent
 from mutagent.agent import Agent
-from mutagent.base import MutagentMeta
 from mutagent.client import LLMClient
 from mutagent.essential_tools import EssentialTools
 from mutagent.messages import (
@@ -20,7 +19,7 @@ from mutagent.messages import (
 )
 from mutagent.runtime.module_manager import ModuleManager
 from mutagent.selector import ToolSelector
-from forwardpy.core import _DECLARED_METHODS
+from mutobj.core import DeclarationMeta, _DECLARED_METHODS
 
 import mutagent.builtins  # noqa: F401  -- register all @impl
 
@@ -72,11 +71,11 @@ def _make_stream_events_for_response(response: Response) -> list[StreamEvent]:
 
 class TestAgentDeclaration:
 
-    def test_inherits_from_mutagent_object(self):
-        assert issubclass(Agent, mutagent.Object)
+    def test_inherits_from_mutagent_declaration(self):
+        assert issubclass(Agent, mutagent.Declaration)
 
-    def test_uses_mutagent_meta(self):
-        assert isinstance(Agent, MutagentMeta)
+    def test_uses_declaration_meta(self):
+        assert isinstance(Agent, DeclarationMeta)
 
     def test_declared_methods(self):
         declared = getattr(Agent, _DECLARED_METHODS, set())

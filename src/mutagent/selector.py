@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from mutagent.messages import ToolCall, ToolResult, ToolSchema
 
 
-class ToolSelector(mutagent.Object):
+class ToolSelector(mutagent.Declaration):
     """Tool selection and dispatch -- the sole bridge between Agent and tools.
 
     Responsibilities:

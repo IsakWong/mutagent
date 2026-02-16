@@ -5,7 +5,6 @@ import sys
 
 import pytest
 import mutagent
-from mutagent.base import MutagentMeta
 from mutagent.runtime.module_manager import ModuleManager
 
 
@@ -43,7 +42,7 @@ class TestPatchModule:
     def test_repatch_unregisters_old_impls(self, mgr):
         source1 = (
             "import mutagent\n"
-            "class Svc(mutagent.Object):\n"
+            "class Svc(mutagent.Declaration):\n"
             "    def run(self) -> str: ...\n"
         )
         mgr.patch_module("test_pkg.svc_decl", source1)
@@ -76,7 +75,7 @@ class TestPatchModule:
         """When an impl module is repatched without @impl, method reverts to stub."""
         source_decl = (
             "import mutagent\n"
-            "class Worker(mutagent.Object):\n"
+            "class Worker(mutagent.Declaration):\n"
             "    def do_work(self) -> str: ...\n"
         )
         mgr.patch_module("test_pkg.worker_decl", source_decl)
@@ -127,7 +126,7 @@ class TestInspectIntegration:
     def test_inspect_getsource_class(self, mgr):
         source = (
             "import mutagent\n"
-            "class MyClass(mutagent.Object):\n"
+            "class MyClass(mutagent.Declaration):\n"
             "    name: str\n"
             "    def greet(self) -> str: ...\n"
         )
@@ -174,12 +173,12 @@ class TestHistoryAndVersioning:
         assert history[2].source == "v3 = True\n"
 
 
-class TestMutagentMetaIntegration:
+class TestDeclarationMetaIntegration:
 
     def test_inplace_class_update_via_repatch(self, mgr):
         source1 = (
             "import mutagent\n"
-            "class Agent(mutagent.Object):\n"
+            "class Agent(mutagent.Declaration):\n"
             "    name: str\n"
             "    def run(self) -> str: ...\n"
         )
@@ -190,7 +189,7 @@ class TestMutagentMetaIntegration:
 
         source2 = (
             "import mutagent\n"
-            "class Agent(mutagent.Object):\n"
+            "class Agent(mutagent.Declaration):\n"
             "    name: str\n"
             "    version: int\n"
             "    def run(self) -> str: ...\n"

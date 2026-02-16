@@ -107,7 +107,7 @@ def make_schema_from_method(obj: Any, method_name: str) -> ToolSchema:
     """Generate a ToolSchema from a method's source definition.
 
     Parses the class source code to extract the method signature,
-    since forwardpy stubs replace the original signature.
+    since mutobj stubs replace the original signature.
     """
     cls = type(obj)
     docstring, params = _parse_method_signature(cls, method_name)

@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from mutagent.messages import Message, StreamEvent, ToolSchema
 
 
-class LLMClient(mutagent.Object):
+class LLMClient(mutagent.Declaration):
     """LLM client interface.
 
     Provides a synchronous interface for sending messages to a language model.

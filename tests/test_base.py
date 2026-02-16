@@ -1,47 +1,30 @@
-"""Tests for mutagent.Object base class and MutagentMeta."""
+"""Tests for mutagent Declaration base class (via mutobj)."""
 
 import pytest
 import mutagent
-from mutagent.base import MutagentMeta
-from forwardpy.core import ObjectMeta, _DECLARED_METHODS
+from mutobj import Declaration
+from mutobj.core import DeclarationMeta, _DECLARED_METHODS
 
 
-class TestMutagentMeta:
+class TestDeclarationMeta:
 
-    def test_inherits_from_objectmeta(self):
-        assert issubclass(MutagentMeta, ObjectMeta)
+    def test_declaration_uses_declaration_meta(self):
+        assert isinstance(mutagent.Declaration, DeclarationMeta)
 
-    def test_object_uses_mutagent_meta(self):
-        assert type(mutagent.Object) is MutagentMeta
-
-    def test_subclass_uses_mutagent_meta(self):
-        class MyClass(mutagent.Object):
+    def test_subclass_uses_declaration_meta(self):
+        class MyClass(mutagent.Declaration):
             pass
 
-        assert type(MyClass) is MutagentMeta
-
-    def test_class_registered_in_registry(self):
-        class RegTest(mutagent.Object):
-            pass
-
-        key = (RegTest.__module__, RegTest.__qualname__)
-        assert key in MutagentMeta._class_registry
-        assert MutagentMeta._class_registry[key] is RegTest
-
-    def test_mutagent_object_registered(self):
-        key = ("mutagent.base", "Object")
-        assert key in MutagentMeta._class_registry
+        assert isinstance(MyClass, DeclarationMeta)
 
 
-class TestMutagentObject:
+class TestMutagentDeclaration:
 
-    def test_inherits_from_forwardpy_object(self):
-        import forwardpy
-
-        assert issubclass(mutagent.Object, forwardpy.Object)
+    def test_is_mutobj_declaration(self):
+        assert mutagent.Declaration is Declaration
 
     def test_attribute_declaration(self):
-        class Item(mutagent.Object):
+        class Item(mutagent.Declaration):
             name: str
             value: int
 
@@ -50,7 +33,7 @@ class TestMutagentObject:
         assert item.value == 42
 
     def test_attribute_not_set_raises(self):
-        class Thing(mutagent.Object):
+        class Thing(mutagent.Declaration):
             data: str
 
         t = Thing()
@@ -58,14 +41,14 @@ class TestMutagentObject:
             _ = t.data
 
     def test_stub_method_recognized(self):
-        class Service(mutagent.Object):
+        class Service(mutagent.Declaration):
             def process(self) -> str: ...
 
         declared = getattr(Service, _DECLARED_METHODS, set())
         assert "process" in declared
 
     def test_stub_method_raises_not_implemented(self):
-        class Handler(mutagent.Object):
+        class Handler(mutagent.Declaration):
             def handle(self) -> None: ...
 
         h = Handler()
@@ -73,7 +56,7 @@ class TestMutagentObject:
             h.handle()
 
     def test_impl_works(self):
-        class Greeter(mutagent.Object):
+        class Greeter(mutagent.Declaration):
             name: str
 
             def greet(self) -> str: ...
@@ -86,7 +69,7 @@ class TestMutagentObject:
         assert g.greet() == "Hello, World!"
 
     def test_impl_override(self):
-        class Calc(mutagent.Object):
+        class Calc(mutagent.Declaration):
             def compute(self, x: int) -> int: ...
 
         @mutagent.impl(Calc.compute)
@@ -103,12 +86,10 @@ class TestMutagentObject:
         assert c.compute(5) == 10
 
     def test_isinstance_check(self):
-        import forwardpy
-
-        class Agent(mutagent.Object):
+        class Agent(mutagent.Declaration):
             pass
 
         a = Agent()
         assert isinstance(a, Agent)
-        assert isinstance(a, mutagent.Object)
-        assert isinstance(a, forwardpy.Object)
+        assert isinstance(a, mutagent.Declaration)
+        assert isinstance(a, Declaration)

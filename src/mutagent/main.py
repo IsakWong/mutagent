@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from mutagent.messages import StreamEvent
 
 
-class App(mutagent.Object):
+class App(mutagent.Declaration):
     """App entry point.  Override via ``@impl`` for custom UI (e.g. TUI).
 
     Attributes:

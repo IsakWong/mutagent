@@ -2,7 +2,6 @@
 
 __version__ = "0.1.0"
 
-from mutagent.base import MutagentMeta, Object
-from forwardpy import impl
+from mutobj import Declaration, impl
 
-__all__ = ["Object", "MutagentMeta", "impl"]
+__all__ = ["Declaration", "impl"]

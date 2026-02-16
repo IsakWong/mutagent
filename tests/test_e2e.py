@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-import forwardpy
+import mutobj
 
 import pytest
 
@@ -294,7 +294,7 @@ class TestSelfEvolution:
         # Cleanup: unregister override impls, remove virtual modules,
         # then re-load the original selector impl to restore original impls.
         mgr = agent.tool_selector.essential_tools.module_manager
-        forwardpy.unregister_module_impls("user_tools.selector_ext")
+        mutobj.unregister_module_impls("user_tools.selector_ext")
         mgr.cleanup()
         # Re-execute the original selector impl to restore ToolSelector impls
         self._reload_selector_impl()
@@ -325,7 +325,7 @@ class TestSelfEvolution:
                         "source": (
                             "import mutagent\n"
                             "\n"
-                            "class MathTools(mutagent.Object):\n"
+                            "class MathTools(mutagent.Declaration):\n"
                             "    def factorial(self, n: int) -> str:\n"
                             "        '''Compute factorial of n.'''\n"
                             "        ...\n"
