@@ -11,7 +11,7 @@ def test_import_mutagent():
 
 
 def test_version():
-    assert mutagent.__version__ == "0.0.1"
+    assert mutagent.__version__ == "0.1.0"
 
 
 def test_impl_is_forwardpy_impl():

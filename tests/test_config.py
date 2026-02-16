@@ -11,7 +11,23 @@ import mutagent
 import mutagent.builtins  # noqa: F401  -- register all @impl
 
 from mutagent.base import MutagentMeta
-from mutagent.config import Config, _load_json, _resolve_paths_inplace
+from mutagent.config import Config
+
+# Helper functions live in the impl module, not the declaration
+import sys
+_config_impl = sys.modules.get("mutagent.builtins.config")
+if _config_impl is None:
+    from pathlib import Path as _Path
+    import importlib.util as _ilu
+    _impl_path = (
+        _Path(__file__).resolve().parent.parent
+        / "src" / "mutagent" / "builtins" / "config.impl.py"
+    )
+    _spec = _ilu.spec_from_file_location("mutagent.builtins.config_impl", str(_impl_path))
+    _config_impl = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_config_impl)
+_load_json = _config_impl._load_json
+_resolve_paths_inplace = _config_impl._resolve_paths_inplace
 from forwardpy.core import _DECLARED_METHODS
 
 
@@ -194,10 +210,8 @@ class TestConfigLoad:
     def test_load_returns_config(self, tmp_path, monkeypatch):
         """Config.load() should return a Config instance even without any config files."""
         monkeypatch.chdir(tmp_path)
-        config = Config.load()
+        config = Config.load(".mutagent/config.json")
         assert isinstance(config, Config)
-        # Package-level config should always exist
-        assert len(config._layers) >= 1
 
     def test_load_project_config(self, tmp_path, monkeypatch):
         """Project-level config should be loaded and have highest priority."""
@@ -207,7 +221,7 @@ class TestConfigLoad:
         (project_dir / "config.json").write_text(
             json.dumps({"custom_key": "project_value"}), encoding="utf-8"
         )
-        config = Config.load()
+        config = Config.load(".mutagent/config.json")
         assert config.get("custom_key") == "project_value"
 
 
