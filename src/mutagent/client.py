@@ -15,7 +15,7 @@ class LLMClient(mutagent.Object):
 
     Provides a synchronous interface for sending messages to a language model.
     The default implementation (Claude) is registered via @impl in
-    builtins/claude.impl.py.
+    builtins/claude_impl.py.
 
     Attributes:
         model: Model identifier (e.g. "claude-sonnet-4-20250514").

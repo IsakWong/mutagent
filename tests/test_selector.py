@@ -14,23 +14,7 @@ from forwardpy.core import _DECLARED_METHODS
 
 import mutagent.builtins  # noqa: F401  -- register all @impl
 
-# Import make_schema_from_method from the loaded module
-import sys
-_selector_mod = sys.modules.get("mutagent.builtins.selector")
-if _selector_mod is None:
-    # Fallback: load manually
-    import importlib.util
-    _selector_impl_path = (
-        Path(__file__).resolve().parent.parent
-        / "src" / "mutagent" / "builtins" / "selector.impl.py"
-    )
-    _spec = importlib.util.spec_from_file_location(
-        "mutagent.builtins.selector_impl", str(_selector_impl_path)
-    )
-    _selector_mod = importlib.util.module_from_spec(_spec)
-    _spec.loader.exec_module(_selector_mod)
-
-make_schema_from_method = _selector_mod.make_schema_from_method
+from mutagent.builtins.selector_impl import make_schema_from_method
 
 
 class TestEssentialToolsDeclaration:

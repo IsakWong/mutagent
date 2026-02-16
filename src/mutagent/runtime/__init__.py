@@ -1,6 +1,5 @@
-"""mutagent.runtime - Infrastructure layer (ModuleManager, ImplLoader)."""
+"""mutagent.runtime - Infrastructure layer (ModuleManager)."""
 
 from mutagent.runtime.module_manager import ModuleManager
-from mutagent.runtime.impl_loader import ImplLoader
 
-__all__ = ["ModuleManager", "ImplLoader"]
+__all__ = ["ModuleManager"]

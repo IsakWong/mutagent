@@ -14,18 +14,8 @@ from mutagent.base import MutagentMeta
 from mutagent.config import Config
 
 # Helper functions live in the impl module, not the declaration
-import sys
-_config_impl = sys.modules.get("mutagent.builtins.config")
-if _config_impl is None:
-    from pathlib import Path as _Path
-    import importlib.util as _ilu
-    _impl_path = (
-        _Path(__file__).resolve().parent.parent
-        / "src" / "mutagent" / "builtins" / "config.impl.py"
-    )
-    _spec = _ilu.spec_from_file_location("mutagent.builtins.config_impl", str(_impl_path))
-    _config_impl = _ilu.module_from_spec(_spec)
-    _spec.loader.exec_module(_config_impl)
+from mutagent.builtins import config_impl as _config_impl
+
 _load_json = _config_impl._load_json
 _resolve_paths_inplace = _config_impl._resolve_paths_inplace
 from forwardpy.core import _DECLARED_METHODS

@@ -301,11 +301,11 @@ class TestSelfEvolution:
 
     @staticmethod
     def _reload_selector_impl():
-        """Re-execute the builtins/selector.impl.py to restore original @impls."""
+        """Re-execute the builtins/selector_impl.py to restore original @impls."""
         from pathlib import Path
-        selector_impl = Path(__file__).resolve().parent.parent / "src" / "mutagent" / "builtins" / "selector.impl.py"
+        selector_impl = Path(__file__).resolve().parent.parent / "src" / "mutagent" / "builtins" / "selector_impl.py"
         source = selector_impl.read_text(encoding="utf-8")
-        mod = sys.modules.get("mutagent.builtins.selector")
+        mod = sys.modules.get("mutagent.builtins.selector_impl")
         if mod is not None:
             code = compile(source, str(selector_impl), "exec")
             exec(code, mod.__dict__)
@@ -397,7 +397,7 @@ class TestSelfEvolution:
                             "import mutagent\n"
                             "from mutagent.selector import ToolSelector\n"
                             "from mutagent.messages import ToolResult\n"
-                            "from mutagent.builtins.selector import make_schema_from_method, _TOOL_METHODS\n"
+                            "from mutagent.builtins.selector_impl import make_schema_from_method, _TOOL_METHODS\n"
                             "\n"
                             "@mutagent.impl(ToolSelector.get_tools, override=True)\n"
                             "def get_tools(self, context):\n"

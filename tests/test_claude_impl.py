@@ -1,4 +1,4 @@
-"""Tests for Claude API implementation (builtins/claude.impl.py)."""
+"""Tests for Claude API implementation (builtins/claude_impl.py)."""
 
 import json
 import os
@@ -12,20 +12,8 @@ import mutagent.builtins  # noqa: F401  -- register all @impl
 
 from mutagent.messages import Message, Response, ToolCall, ToolResult, ToolSchema
 
-# Get the claude module from sys.modules (loaded by load_builtins via ImplLoader)
-_claude = sys.modules.get("mutagent.builtins.claude")
-if _claude is None:
-    # Fallback: load manually
-    import importlib.util
-    _claude_impl_path = (
-        Path(__file__).resolve().parent.parent
-        / "src" / "mutagent" / "builtins" / "claude.impl.py"
-    )
-    spec = importlib.util.spec_from_file_location(
-        "mutagent.builtins.claude_impl", str(_claude_impl_path)
-    )
-    _claude = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(_claude)
+from mutagent.builtins import claude_impl as _claude
+
 _messages_to_claude = _claude._messages_to_claude
 _tools_to_claude = _claude._tools_to_claude
 _response_from_claude = _claude._response_from_claude
