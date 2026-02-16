@@ -27,7 +27,7 @@ class ToolSelector(mutagent.Object):
 
     essential_tools: EssentialTools
 
-    async def get_tools(self, context: dict) -> list[ToolSchema]:
+    def get_tools(self, context: dict) -> list[ToolSchema]:
         """Return the list of tool schemas available in the current context.
 
         Args:
@@ -38,7 +38,7 @@ class ToolSelector(mutagent.Object):
         """
         ...
 
-    async def dispatch(self, tool_call: ToolCall) -> ToolResult:
+    def dispatch(self, tool_call: ToolCall) -> ToolResult:
         """Route a tool call to the appropriate implementation and execute it.
 
         Args:

@@ -2,7 +2,6 @@
 
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import forwardpy
 
@@ -14,7 +13,7 @@ from mutagent.agent import Agent
 from mutagent.client import LLMClient
 from mutagent.config import Config
 from mutagent.essential_tools import EssentialTools
-from mutagent.main import Main
+from mutagent.main import App
 from mutagent.messages import InputEvent, Message, Response, StreamEvent, ToolCall, ToolResult, ToolSchema
 from mutagent.runtime.module_manager import ModuleManager
 from mutagent.selector import ToolSelector
@@ -26,7 +25,7 @@ def _create_test_agent(
     base_url: str = "https://api.anthropic.com",
     system_prompt: str = "",
 ) -> Agent:
-    """Create an Agent for testing via Main.setup_agent()."""
+    """Create an Agent for testing via App.setup_agent()."""
     config = Config(_layers=[(Path(), {
         "models": {"test": {
             "model_id": model,
@@ -35,7 +34,7 @@ def _create_test_agent(
         }},
         "default_model": "test",
     })])
-    entry = Main(config=config)
+    entry = App(config=config)
     entry.setup_agent(system_prompt=system_prompt)
     return entry.agent
 
@@ -44,8 +43,8 @@ def _create_test_agent(
 # Helpers
 # ---------------------------------------------------------------------------
 
-async def _single_input(text: str):
-    """Create an async iterator yielding a single user_message InputEvent."""
+def _single_input(text: str):
+    """Create an iterator yielding a single user_message InputEvent."""
     yield InputEvent(type="user_message", text=text)
 
 
@@ -62,11 +61,11 @@ def _events_for(response: Response) -> list[StreamEvent]:
 
 
 def _make_mock_send(responses: list[Response]):
-    """Create a mock send_message async generator from a list of Responses."""
+    """Create a mock send_message generator from a list of Responses."""
     event_lists = [_events_for(r) for r in responses]
     call_idx = 0
 
-    async def mock_send(*args, **kwargs):
+    def mock_send(*args, **kwargs):
         nonlocal call_idx
         evts = event_lists[call_idx]
         call_idx += 1
@@ -76,10 +75,10 @@ def _make_mock_send(responses: list[Response]):
     return mock_send
 
 
-async def _collect_text(async_iter) -> str:
+def _collect_text(iter) -> str:
     """Collect text from text_delta events."""
     parts = []
-    async for event in async_iter:
+    for event in iter:
         if event.type == "text_delta":
             parts.append(event.text)
     return "".join(parts)
@@ -113,8 +112,7 @@ class TestEndToEnd:
         agent = _create_test_agent(api_key="test-key")
         yield agent
 
-    @pytest.mark.asyncio
-    async def test_inspect_then_patch_then_run(self, agent, tmp_path):
+    def test_inspect_then_patch_then_run(self, agent, tmp_path):
         """Simulate: Agent inspects module -> patches code -> runs code -> saves."""
         # Step 1: LLM asks to inspect a module
         inspect_response = Response(
@@ -197,7 +195,7 @@ class TestEndToEnd:
             final_response,
         ])
 
-        result = await _collect_text(agent.run(_single_input("Create a helper module with an add function")))
+        result = _collect_text(agent.run(_single_input("Create a helper module with an add function")))
 
         # Verify final result
         assert "Done" in result
@@ -226,8 +224,7 @@ class TestEndToEnd:
         assert saved_file.exists()
         assert "def add" in saved_file.read_text()
 
-    @pytest.mark.asyncio
-    async def test_view_source_of_patched_module(self, agent):
+    def test_view_source_of_patched_module(self, agent):
         """Agent patches a module then views its source."""
         # Patch
         patch_resp = Response(
@@ -267,15 +264,14 @@ class TestEndToEnd:
 
         agent.client.send_message = _make_mock_send([patch_resp, view_resp, final_resp])
 
-        result = await _collect_text(agent.run(_single_input("Show me the Greeter class")))
+        result = _collect_text(agent.run(_single_input("Show me the Greeter class")))
 
         # Verify view_source returned the source
         view_result = agent.messages[4].tool_results[0]
         assert "class Greeter" in view_result.content
         assert "return 'hi'" in view_result.content
 
-    @pytest.mark.asyncio
-    async def test_simple_chat_no_tools(self, agent):
+    def test_simple_chat_no_tools(self, agent):
         """Agent can respond without using any tools."""
         response = Response(
             message=Message(role="assistant", content="Hello! I'm mutagent."),
@@ -283,7 +279,7 @@ class TestEndToEnd:
         )
         agent.client.send_message = _make_mock_send([response])
 
-        result = await _collect_text(agent.run(_single_input("Hello")))
+        result = _collect_text(agent.run(_single_input("Hello")))
         assert result == "Hello! I'm mutagent."
         assert len(agent.messages) == 2
 
@@ -314,8 +310,7 @@ class TestSelfEvolution:
             code = compile(source, str(selector_impl), "exec")
             exec(code, mod.__dict__)
 
-    @pytest.mark.asyncio
-    async def test_create_tool_and_use_it(self, agent):
+    def test_create_tool_and_use_it(self, agent):
         """Self-evolution: Agent creates a new tool class, patches ToolSelector, then uses it."""
         # Step 1: Agent creates a new tool class declaration
         create_decl_resp = Response(
@@ -389,7 +384,6 @@ class TestSelfEvolution:
         )
 
         # Step 4: Agent creates a SEPARATE override module for ToolSelector
-        # (does NOT patch mutagent.builtins.selector, preserving original helpers)
         patch_selector_resp = Response(
             message=Message(
                 role="assistant",
@@ -400,14 +394,13 @@ class TestSelfEvolution:
                     arguments={
                         "module_path": "user_tools.selector_ext",
                         "source": (
-                            "import asyncio\n"
                             "import mutagent\n"
                             "from mutagent.selector import ToolSelector\n"
                             "from mutagent.messages import ToolResult\n"
                             "from mutagent.builtins.selector import make_schema_from_method, _TOOL_METHODS\n"
                             "\n"
                             "@mutagent.impl(ToolSelector.get_tools, override=True)\n"
-                            "async def get_tools(self, context):\n"
+                            "def get_tools(self, context):\n"
                             "    schemas = []\n"
                             "    for name in _TOOL_METHODS:\n"
                             "        schemas.append(make_schema_from_method(self.essential_tools, name))\n"
@@ -417,7 +410,7 @@ class TestSelfEvolution:
                             "    return schemas\n"
                             "\n"
                             "@mutagent.impl(ToolSelector.dispatch, override=True)\n"
-                            "async def dispatch(self, tool_call):\n"
+                            "def dispatch(self, tool_call):\n"
                             "    method = getattr(self.essential_tools, tool_call.name, None)\n"
                             "    if method is None:\n"
                             "        from user_tools.math_tools import MathTools\n"
@@ -427,8 +420,6 @@ class TestSelfEvolution:
                             "        return ToolResult(tool_call_id=tool_call.id, content='Unknown tool', is_error=True)\n"
                             "    try:\n"
                             "        result = method(**tool_call.arguments)\n"
-                            "        if asyncio.iscoroutine(result):\n"
-                            "            result = await result\n"
                             "        return ToolResult(tool_call_id=tool_call.id, content=str(result))\n"
                             "    except Exception as e:\n"
                             "        return ToolResult(tool_call_id=tool_call.id, content=str(e), is_error=True)\n"
@@ -471,7 +462,7 @@ class TestSelfEvolution:
             final_resp,
         ])
 
-        result = await _collect_text(agent.run(_single_input("Create a factorial tool and use it")))
+        result = _collect_text(agent.run(_single_input("Create a factorial tool and use it")))
 
         # Verify the full workflow completed
         assert "720" in result

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import importlib
 import os
 import sys
@@ -106,7 +105,7 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
 
 
 @mutagent.impl(App.handle_stream_event)
-async def handle_stream_event(self, event):
+def handle_stream_event(self, event):
     """Default event handler that prints to console."""
     if event.type == "text_delta":
         print(event.text, end="", flush=True)
@@ -133,38 +132,40 @@ async def handle_stream_event(self, event):
 
 
 @mutagent.impl(App.run)
-async def run(self) -> None:
+def run(self) -> None:
     self.setup_agent(system_prompt=SYSTEM_PROMPT)
     model = self.config.get_model()
     print(f"mutagent ready  (model: {model.get('model_id', '?')})")
-    print("Type your message. Empty line or Ctrl+C to exit.\n")
+    print("Type your message. Ctrl+C to exit.\n")
 
     while True:
         try:
-            async for event in self.agent.run(self.input_stream()):
-                await self.handle_stream_event(event)
-            if self.confirm_exit():
-                print("Bye.")
-                return
-        except (EOFError, KeyboardInterrupt, asyncio.CancelledError):
+            for event in self.agent.run(self.input_stream()):
+                self.handle_stream_event(event)
+            # End session
+            break
+        except KeyboardInterrupt:
             print("\n[User interrupted]")
-        
         except Exception as e:
             print(f"\n[Error: {e}]", file=sys.stderr, flush=True)
 
 
 @mutagent.impl(App.input_stream)
-async def input_stream(self):
-    """Async generator that reads user input from stdin."""
-    loop = asyncio.get_event_loop()
+def input_stream(self):
+    """Generator that reads user input from stdin."""
     while True:
         try:
-            user_input = await loop.run_in_executor(None, input, "> ")
-        except (EOFError, asyncio.CancelledError):
+            user_input = input("> ")
+            while not user_input.strip():
+                user_input = input("")
+            yield InputEvent(type="user_message", text=user_input)
+        except KeyboardInterrupt:
+            pass
+        except EOFError:
             return
-        if not user_input.strip():
-            continue
-        yield InputEvent(type="user_message", text=user_input)
+        if self.confirm_exit():
+            print("Bye.")
+            return
 
 
 def _summarize_args(args: dict) -> str:

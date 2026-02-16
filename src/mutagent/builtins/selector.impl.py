@@ -1,7 +1,6 @@
 """mutagent.builtins.selector -- ToolSelector MVP implementation."""
 
 import ast
-import asyncio
 import inspect
 import textwrap
 from typing import Any
@@ -155,7 +154,7 @@ _TOOL_METHODS = [
 
 
 @mutagent.impl(ToolSelector.get_tools)
-async def get_tools(self: ToolSelector, context: dict) -> list[ToolSchema]:
+def get_tools(self: ToolSelector, context: dict) -> list[ToolSchema]:
     """MVP: generate schemas from EssentialTools method signatures."""
     schemas = []
     for name in _TOOL_METHODS:
@@ -165,7 +164,7 @@ async def get_tools(self: ToolSelector, context: dict) -> list[ToolSchema]:
 
 
 @mutagent.impl(ToolSelector.dispatch)
-async def dispatch(self: ToolSelector, tool_call: ToolCall) -> ToolResult:
+def dispatch(self: ToolSelector, tool_call: ToolCall) -> ToolResult:
     """MVP: directly invoke the corresponding EssentialTools method."""
     method = getattr(self.essential_tools, tool_call.name, None)
     if method is None:
@@ -176,8 +175,6 @@ async def dispatch(self: ToolSelector, tool_call: ToolCall) -> ToolResult:
         )
     try:
         result = method(**tool_call.arguments)
-        if asyncio.iscoroutine(result):
-            result = await result
         return ToolResult(tool_call_id=tool_call.id, content=str(result))
     except Exception as e:
         return ToolResult(

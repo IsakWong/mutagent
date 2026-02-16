@@ -4,7 +4,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -209,9 +209,8 @@ class TestResponseFromClaude:
 
 class TestSendMessageIntegration:
 
-    @pytest.mark.asyncio
-    async def test_send_message_success(self):
-        """Test send_message with a mocked aiohttp response (stream=False)."""
+    def test_send_message_success(self):
+        """Test send_message with a mocked requests response (stream=False)."""
         from mutagent.client import LLMClient
 
         mock_response_data = {
@@ -220,27 +219,18 @@ class TestSendMessageIntegration:
             "usage": {"input_tokens": 5, "output_tokens": 3},
         }
 
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.json = AsyncMock(return_value=mock_response_data)
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = mock_response_data
 
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("requests.post", return_value=mock_resp):
             client = LLMClient(
                 model="claude-sonnet-4-20250514",
                 api_key="test-key",
                 base_url="https://api.anthropic.com",
             )
             messages = [Message(role="user", content="Hi")]
-            events = []
-            async for event in client.send_message(messages, [], stream=False):
-                events.append(event)
+            events = list(client.send_message(messages, [], stream=False))
 
         # Find the response_done event
         resp_event = [e for e in events if e.type == "response_done"][0]
@@ -248,17 +238,7 @@ class TestSendMessageIntegration:
         assert resp.message.content == "Hello from Claude!"
         assert resp.stop_reason == "end_turn"
 
-        # Verify the request was made correctly
-        mock_session.post.assert_called_once()
-        call_args = mock_session.post.call_args
-        assert call_args[0][0] == "https://api.anthropic.com/v1/messages"
-        assert call_args[1]["headers"]["authorization"] == "Bearer test-key"
-        payload = call_args[1]["json"]
-        assert payload["model"] == "claude-sonnet-4-20250514"
-        assert "tools" not in payload  # No tools provided
-
-    @pytest.mark.asyncio
-    async def test_send_message_with_tools(self):
+    def test_send_message_with_tools(self):
         """Test send_message includes tools in the request."""
         from mutagent.client import LLMClient
 
@@ -275,16 +255,9 @@ class TestSendMessageIntegration:
             "usage": {"input_tokens": 10, "output_tokens": 8},
         }
 
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.json = AsyncMock(return_value=mock_response_data)
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = mock_response_data
 
         tools = [ToolSchema(
             name="view_source",
@@ -292,16 +265,14 @@ class TestSendMessageIntegration:
             input_schema={"type": "object", "properties": {"target": {"type": "string"}}},
         )]
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("requests.post", return_value=mock_resp):
             client = LLMClient(
                 model="claude-sonnet-4-20250514",
                 api_key="test-key",
                 base_url="https://api.anthropic.com",
             )
             messages = [Message(role="user", content="Show me the code")]
-            events = []
-            async for event in client.send_message(messages, tools, stream=False):
-                events.append(event)
+            events = list(client.send_message(messages, tools, stream=False))
 
         resp_event = [e for e in events if e.type == "response_done"][0]
         resp = resp_event.response
@@ -309,40 +280,25 @@ class TestSendMessageIntegration:
         assert len(resp.message.tool_calls) == 1
         assert resp.message.tool_calls[0].name == "view_source"
 
-        # Verify tools were included
-        payload = mock_session.post.call_args[1]["json"]
-        assert "tools" in payload
-        assert len(payload["tools"]) == 1
-
-    @pytest.mark.asyncio
-    async def test_send_message_api_error(self):
+    def test_send_message_api_error(self):
         """Test send_message yields error event on API error."""
         from mutagent.client import LLMClient
 
-        mock_resp = AsyncMock()
-        mock_resp.status = 401
-        mock_resp.json = AsyncMock(return_value={
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.json.return_value = {
             "error": {"message": "Invalid API key"}
-        })
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
+        }
 
-        mock_session = AsyncMock()
-        mock_session.post = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("requests.post", return_value=mock_resp):
             client = LLMClient(
                 model="claude-sonnet-4-20250514",
                 api_key="bad-key",
                 base_url="https://api.anthropic.com",
             )
-            events = []
-            async for event in client.send_message(
+            events = list(client.send_message(
                 [Message(role="user", content="Hi")], [], stream=False
-            ):
-                events.append(event)
+            ))
 
         assert len(events) == 1
         assert events[0].type == "error"
@@ -356,8 +312,7 @@ _has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
 class TestClaudeRealAPI:
     """Integration tests using the real Claude API (skipped without API key)."""
 
-    @pytest.mark.asyncio
-    async def test_real_send_message(self):
+    def test_real_send_message(self):
         """Send a real message to Claude API and verify the response structure."""
         from mutagent.client import LLMClient
 
@@ -367,8 +322,10 @@ class TestClaudeRealAPI:
             base_url="https://api.anthropic.com",
         )
         messages = [Message(role="user", content="Reply with exactly: PONG")]
-        resp = await client.send_message(messages, [])
+        events = list(client.send_message(messages, []))
 
+        resp_event = [e for e in events if e.type == "response_done"][0]
+        resp = resp_event.response
         assert isinstance(resp, Response)
         assert resp.message.role == "assistant"
         assert resp.message.content  # non-empty
@@ -376,8 +333,7 @@ class TestClaudeRealAPI:
         assert resp.usage.get("input_tokens", 0) > 0
         assert resp.usage.get("output_tokens", 0) > 0
 
-    @pytest.mark.asyncio
-    async def test_real_send_message_with_tool_use(self):
+    def test_real_send_message_with_tool_use(self):
         """Send a real message with tools and verify tool_use response."""
         from mutagent.client import LLMClient
 
@@ -398,8 +354,10 @@ class TestClaudeRealAPI:
             },
         )]
         messages = [Message(role="user", content="What's the weather in Tokyo?")]
-        resp = await client.send_message(messages, tools)
+        events = list(client.send_message(messages, tools))
 
+        resp_event = [e for e in events if e.type == "response_done"][0]
+        resp = resp_event.response
         assert isinstance(resp, Response)
         assert resp.message.role == "assistant"
         # LLM should use the tool

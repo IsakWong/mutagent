@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, Iterator
 
 import mutagent
 
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 class LLMClient(mutagent.Object):
     """LLM client interface.
 
-    Provides an async interface for sending messages to a language model.
+    Provides a synchronous interface for sending messages to a language model.
     The default implementation (Claude) is registered via @impl in
     builtins/claude.impl.py.
 
@@ -27,13 +27,13 @@ class LLMClient(mutagent.Object):
     api_key: str
     base_url: str
 
-    async def send_message(
+    def send_message(
         self,
         messages: list[Message],
         tools: list[ToolSchema],
         system_prompt: str = "",
         stream: bool = True,
-    ) -> AsyncIterator[StreamEvent]:
+    ) -> Iterator[StreamEvent]:
         """Send messages to the LLM and yield streaming events.
 
         When stream=True, the underlying HTTP request uses SSE streaming

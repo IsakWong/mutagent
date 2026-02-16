@@ -131,16 +131,14 @@ class TestToolSelectorImpl:
         yield selector
         mgr.cleanup()
 
-    @pytest.mark.asyncio
-    async def test_get_tools_returns_schemas(self, selector_with_tools):
-        schemas = await selector_with_tools.get_tools({})
+    def test_get_tools_returns_schemas(self, selector_with_tools):
+        schemas = selector_with_tools.get_tools({})
         assert len(schemas) == 5
         names = {s.name for s in schemas}
         assert names == {"inspect_module", "view_source", "patch_module", "save_module", "run_code"}
 
-    @pytest.mark.asyncio
-    async def test_get_tools_schema_structure(self, selector_with_tools):
-        schemas = await selector_with_tools.get_tools({})
+    def test_get_tools_schema_structure(self, selector_with_tools):
+        schemas = selector_with_tools.get_tools({})
         for schema in schemas:
             assert isinstance(schema, ToolSchema)
             assert schema.name
@@ -148,25 +146,22 @@ class TestToolSelectorImpl:
             assert "type" in schema.input_schema
             assert schema.input_schema["type"] == "object"
 
-    @pytest.mark.asyncio
-    async def test_dispatch_unknown_tool(self, selector_with_tools):
+    def test_dispatch_unknown_tool(self, selector_with_tools):
         call = ToolCall(id="tc_1", name="nonexistent_tool", arguments={})
-        result = await selector_with_tools.dispatch(call)
+        result = selector_with_tools.dispatch(call)
         assert result.is_error
         assert "Unknown tool" in result.content
 
-    @pytest.mark.asyncio
-    async def test_dispatch_returns_result(self, selector_with_tools):
+    def test_dispatch_returns_result(self, selector_with_tools):
         # Dispatch a tool that returns a result (even if it's an error message)
         call = ToolCall(id="tc_2", name="run_code", arguments={"code": "print(1+1)"})
-        result = await selector_with_tools.dispatch(call)
+        result = selector_with_tools.dispatch(call)
         assert not result.is_error
         assert "2" in result.content
 
-    @pytest.mark.asyncio
-    async def test_dispatch_exception_becomes_error(self, selector_with_tools):
+    def test_dispatch_exception_becomes_error(self, selector_with_tools):
         # Dispatch with wrong argument types to trigger an actual exception
         call = ToolCall(id="tc_3", name="inspect_module", arguments={"depth": "not_a_number"})
-        result = await selector_with_tools.dispatch(call)
+        result = selector_with_tools.dispatch(call)
         # This should either work (str converted) or raise TypeError
         assert result.tool_call_id == "tc_3"

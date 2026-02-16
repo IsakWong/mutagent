@@ -29,9 +29,7 @@ class TestLLMClientDeclaration:
         declared = getattr(LLMClient, _DECLARED_METHODS, set())
         assert "send_message" in declared
 
-    def test_send_message_is_async(self):
-        import inspect
-
+    def test_send_message_is_callable(self):
         client = LLMClient(
             model="test-model",
             api_key="test-key",

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, Iterator
 
 import mutagent
 
@@ -31,9 +31,9 @@ class Agent(mutagent.Object):
     system_prompt: str
     messages: list
 
-    async def run(
-        self, input_stream: AsyncIterator[InputEvent], stream: bool = True
-    ) -> AsyncIterator[StreamEvent]:
+    def run(
+        self, input_stream: Iterator[InputEvent], stream: bool = True
+    ) -> Iterator[StreamEvent]:
         """Run the agent conversation loop, consuming input events and yielding output events.
 
         This is the main entry point. It consumes InputEvents from input_stream,
@@ -43,7 +43,7 @@ class Agent(mutagent.Object):
         The generator runs until input_stream is exhausted.
 
         Args:
-            input_stream: Async iterator of user input events.
+            input_stream: Iterator of user input events.
             stream: Whether to use SSE streaming for the HTTP request.
 
         Yields:
@@ -52,7 +52,7 @@ class Agent(mutagent.Object):
         """
         ...
 
-    async def step(self, stream: bool = True) -> AsyncIterator[StreamEvent]:
+    def step(self, stream: bool = True) -> Iterator[StreamEvent]:
         """Execute a single LLM call, yielding streaming events.
 
         Args:
@@ -63,7 +63,7 @@ class Agent(mutagent.Object):
         """
         ...
 
-    async def handle_tool_calls(self, tool_calls: list[ToolCall]) -> list[ToolResult]:
+    def handle_tool_calls(self, tool_calls: list[ToolCall]) -> list[ToolResult]:
         """Execute tool calls and return results.
 
         Args:

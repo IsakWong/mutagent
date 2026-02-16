@@ -1,6 +1,6 @@
 """mutagent.builtins.agent -- Agent main loop implementation."""
 
-from typing import AsyncIterator
+from typing import Iterator
 
 import mutagent
 from mutagent.agent import Agent
@@ -8,18 +8,18 @@ from mutagent.messages import InputEvent, Message, StreamEvent, ToolCall, ToolRe
 
 
 @mutagent.impl(Agent.run)
-async def run(
-    self: Agent, input_stream: AsyncIterator[InputEvent], stream: bool = True
-) -> AsyncIterator[StreamEvent]:
+def run(
+    self: Agent, input_stream: Iterator[InputEvent], stream: bool = True
+) -> Iterator[StreamEvent]:
     """Run the agent conversation loop, consuming input events and yielding output events."""
-    async for input_event in input_stream:
+    for input_event in input_stream:
         if input_event.type == "user_message":
             self.messages.append(Message(role="user", content=input_event.text))
 
             while True:
                 response = None
                 got_error = False
-                async for event in self.step(stream=stream):
+                for event in self.step(stream=stream):
                     yield event
                     if event.type == "response_done":
                         response = event.response
@@ -45,7 +45,7 @@ async def run(
                     results = []
                     for call in response.message.tool_calls:
                         yield StreamEvent(type="tool_exec_start", tool_call=call)
-                        result = await self.tool_selector.dispatch(call)
+                        result = self.tool_selector.dispatch(call)
                         yield StreamEvent(
                             type="tool_exec_end", tool_call=call, tool_result=result
                         )
@@ -60,24 +60,23 @@ async def run(
 
 
 @mutagent.impl(Agent.step)
-async def step(
+def step(
     self: Agent, stream: bool = True
-) -> AsyncIterator[StreamEvent]:
+) -> Iterator[StreamEvent]:
     """Execute a single LLM call, yielding streaming events."""
-    tools = await self.tool_selector.get_tools({})
-    async for event in self.client.send_message(
+    tools = self.tool_selector.get_tools({})
+    yield from self.client.send_message(
         self.messages, tools, system_prompt=self.system_prompt, stream=stream,
-    ):
-        yield event
+    )
 
 
 @mutagent.impl(Agent.handle_tool_calls)
-async def handle_tool_calls(
+def handle_tool_calls(
     self: Agent, tool_calls: list[ToolCall]
 ) -> list[ToolResult]:
     """Dispatch tool calls through the selector."""
     results = []
     for call in tool_calls:
-        result = await self.tool_selector.dispatch(call)
+        result = self.tool_selector.dispatch(call)
         results.append(result)
     return results

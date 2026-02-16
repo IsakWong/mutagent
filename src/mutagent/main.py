@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import importlib
 import os
 import sys
@@ -55,11 +54,11 @@ class App(mutagent.Object):
         """
         ...
 
-    async def input_stream(self):
-        """Async generator that reads user input from stdin."""
+    def input_stream(self):
+        """Generator that reads user input from stdin."""
         ...
 
-    async def handle_stream_event(self, event: StreamEvent):
+    def handle_stream_event(self, event: StreamEvent):
         """Handle an output event from the agent.
 
         Override to control how events are displayed to the user (e.g. TUI,
@@ -81,7 +80,7 @@ class App(mutagent.Object):
         """
         ...
 
-    async def run(self) -> None:
+    def run(self) -> None:
         """Run the agent session loop.
 
         The default implementation calls ``setup_agent()`` then enters
@@ -102,4 +101,4 @@ def main() -> None:
     app.load_config(".mutagent/config.json")
 
     # 3. Run app
-    asyncio.run(app.run())
+    app.run()
