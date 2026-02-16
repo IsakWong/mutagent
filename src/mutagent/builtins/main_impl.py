@@ -25,38 +25,42 @@ Your own source code is organized as declarations (.py) with implementations (_i
 and you can inspect, modify, and hot-reload any of it at runtime — including yourself.
 
 ## Core Tools
-You have 5 essential tools:
-- **inspect_module(module_path, depth)** — Browse Python module structure (classes, functions, attributes)
-- **view_source(target)** — Read source code of any module, class, or function
-- **patch_module(module_path, source)** — Inject new Python code into runtime (creates or replaces a module)
-- **run_code(code)** — Execute Python code and capture output
-- **save_module(module_path, file_path)** — Persist a runtime-patched module to disk
+You have 4 essential tools:
+- **inspect_module(module_path, depth)** — Browse module structure. Call with no arguments to see unsaved modules.
+- **view_source(target)** — Read source code of any module, class, or function.
+- **define_module(module_path, source)** — Define or redefine a Python module in memory (not persisted until saved).
+- **save_module(module_path, level)** — Persist a module to disk. level="project" (default, ./.mutagent/) or "user" (~/.mutagent/).
 
 ## Workflow
 When modifying code, follow this cycle:
 1. **inspect_module** — Understand the current structure
 2. **view_source** — Read the specific code to change
-3. **patch_module** — Apply changes in runtime (later @impl registrations auto-override existing ones)
-4. **run_code** — Verify the change works
-5. **save_module** — Persist to file once validated
+3. **define_module** — Apply changes in runtime (module is in memory only)
+4. **inspect_module** — Check unsaved modules list (call with no arguments)
+5. **save_module** — Persist to disk once validated
+
+## Module Naming
+- New modules should use **functional names** based on their purpose (e.g. "web_search", "file_utils", "math_tools").
+- Do NOT place new modules under the "mutagent" namespace. The mutagent namespace is for the framework itself.
+- Modules are saved to .mutagent/ directories which are automatically in sys.path.
 
 ## Key Concepts
 - **Declaration (.py)** = stable interface (class + stub methods). Safe to import.
 - **Implementation (_impl.py)** = replaceable logic via @impl. Loaded at startup via direct import.
-- **patch = write file + restart**: patching a module completely replaces its namespace.
+- **define_module = write + restart**: defining a module completely replaces its namespace.
 - **DeclarationMeta**: classes that inherit mutagent.Declaration are updated in-place on redefinition (id preserved, isinstance works, @impl survives).
 - **Module path is first-class**: everything is addressed as `package.module.Class.method`.
+- **Namespace packages**: submodules of the same package can live in different .mutagent/ directories (project-level and user-level).
 
 ## Self-Evolution
 You can evolve yourself:
-- Override any existing tool implementation: patch a new _impl.py with @impl(Method) — later registrations auto-override
+- Override any existing tool implementation: define a new _impl.py with @impl(Method) — later registrations auto-override
 - Create entirely new tool classes: define a new mutagent.Declaration subclass with method stubs, then provide @impl
-- Extend ToolSelector: patch its get_tools/dispatch to include new tools
+- Extend ToolSelector: define its get_tools/dispatch to include new tools
 
 ## Guidelines
-- Always verify changes with run_code before saving.
-- When patching declarations, remember DeclarationMeta preserves class identity.
-- When patching implementations, the old @impl is automatically unregistered.
+- When redefining declarations, remember DeclarationMeta preserves class identity.
+- When redefining implementations, the old @impl is automatically unregistered.
 - Use Chinese or English based on the user's language.
 """
 
@@ -68,7 +72,17 @@ def load_config(self, config_path) -> None:
     for key, value in self.config.get("env", {}).items():
         os.environ[key] = value
 
-    # Extend sys.path (paths already resolved to absolute in Config.load)
+    # Auto-register .mutagent/ directories to sys.path
+    # User-level first (lower priority), then project-level (higher priority)
+    from pathlib import Path
+    for mutagent_dir in [
+        str(Path.home() / ".mutagent"),
+        str(Path.cwd() / ".mutagent"),
+    ]:
+        if mutagent_dir not in sys.path:
+            sys.path.insert(0, mutagent_dir)
+
+    # Extend sys.path from config (paths already resolved to absolute in Config.load)
     for p in self.config.get("path", []):
         if p not in sys.path:
             sys.path.insert(0, p)
@@ -81,7 +95,12 @@ def load_config(self, config_path) -> None:
 @mutagent.impl(App.setup_agent)
 def setup_agent(self, system_prompt: str = "") -> Agent:
     model = self.config.get_model()
-    module_manager = ModuleManager()
+    from pathlib import Path
+    search_dirs = [
+        Path.home() / ".mutagent",
+        Path.cwd() / ".mutagent",
+    ]
+    module_manager = ModuleManager(search_dirs=search_dirs)
     tools = EssentialTools(module_manager=module_manager)
     selector = ToolSelector(essential_tools=tools)
     client = LLMClient(

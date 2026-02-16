@@ -64,7 +64,17 @@ def _inspect_module_obj(mod: types.ModuleType, depth: int, current_depth: int = 
 @mutagent.impl(EssentialTools.inspect_module)
 def inspect_module(self: EssentialTools, module_path: str = "", depth: int = 2) -> str:
     """Inspect the structure of a Python module."""
+    parts = []
+
+    # Show unsaved modules when called with no arguments
     if not module_path:
+        unsaved = self.module_manager.get_unsaved_modules()
+        if unsaved:
+            parts.append("[Unsaved modules]")
+            for m in sorted(unsaved):
+                version = self.module_manager.get_version(m)
+                parts.append(f"  {m} (v{version})")
+            parts.append("")
         module_path = "mutagent"
 
     mod = sys.modules.get(module_path)
@@ -75,4 +85,5 @@ def inspect_module(self: EssentialTools, module_path: str = "", depth: int = 2) 
         except ImportError:
             return f"Module not found: {module_path}"
 
-    return _inspect_module_obj(mod, depth)
+    parts.append(_inspect_module_obj(mod, depth))
+    return "\n".join(parts)

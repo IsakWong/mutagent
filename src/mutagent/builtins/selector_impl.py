@@ -147,9 +147,8 @@ def make_schema_from_method(obj: Any, method_name: str) -> ToolSchema:
 _TOOL_METHODS = [
     "inspect_module",
     "view_source",
-    "patch_module",
+    "define_module",
     "save_module",
-    "run_code",
 ]
 
 

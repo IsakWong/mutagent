@@ -26,7 +26,7 @@ class TestEssentialToolsDeclaration:
 
     def test_declared_methods(self):
         declared = getattr(EssentialTools, _DECLARED_METHODS, set())
-        expected = {"inspect_module", "view_source", "patch_module", "save_module", "run_code"}
+        expected = {"inspect_module", "view_source", "define_module", "save_module"}
         assert expected.issubset(declared)
 
     def test_has_module_manager_attribute(self):
@@ -72,7 +72,7 @@ class TestMakeSchemaFromMethod:
         mgr = ModuleManager()
         tools = EssentialTools(module_manager=mgr)
 
-        schema = make_schema_from_method(tools, "patch_module")
+        schema = make_schema_from_method(tools, "define_module")
         assert "module_path" in schema.input_schema.get("required", [])
         assert "source" in schema.input_schema.get("required", [])
         mgr.cleanup()
@@ -116,9 +116,9 @@ class TestToolSelectorImpl:
 
     def test_get_tools_returns_schemas(self, selector_with_tools):
         schemas = selector_with_tools.get_tools({})
-        assert len(schemas) == 5
+        assert len(schemas) == 4
         names = {s.name for s in schemas}
-        assert names == {"inspect_module", "view_source", "patch_module", "save_module", "run_code"}
+        assert names == {"inspect_module", "view_source", "define_module", "save_module"}
 
     def test_get_tools_schema_structure(self, selector_with_tools):
         schemas = selector_with_tools.get_tools({})
@@ -137,10 +137,10 @@ class TestToolSelectorImpl:
 
     def test_dispatch_returns_result(self, selector_with_tools):
         # Dispatch a tool that returns a result (even if it's an error message)
-        call = ToolCall(id="tc_2", name="run_code", arguments={"code": "print(1+1)"})
+        call = ToolCall(id="tc_2", name="inspect_module", arguments={"module_path": "mutagent"})
         result = selector_with_tools.dispatch(call)
         assert not result.is_error
-        assert "2" in result.content
+        assert "mutagent" in result.content
 
     def test_dispatch_exception_becomes_error(self, selector_with_tools):
         # Dispatch with wrong argument types to trigger an actual exception

@@ -143,14 +143,14 @@ class TestAgentLoop:
         tool_response = Response(
             message=Message(
                 role="assistant",
-                content="Let me run some code.",
-                tool_calls=[ToolCall(id="tc_1", name="run_code", arguments={"code": "print(1+1)"})],
+                content="Let me inspect the module.",
+                tool_calls=[ToolCall(id="tc_1", name="inspect_module", arguments={"module_path": "mutagent"})],
             ),
             stop_reason="tool_use",
         )
         # Second response: final text
         final_response = Response(
-            message=Message(role="assistant", content="The result is 2."),
+            message=Message(role="assistant", content="The result is ready."),
             stop_reason="end_turn",
         )
 
@@ -169,11 +169,11 @@ class TestAgentLoop:
 
         text = _collect_text(agent.run(_single_input("What is 1+1?")))
 
-        assert text == "Let me run some code.The result is 2."
+        assert text == "Let me inspect the module.The result is ready."
         assert len(agent.messages) == 4  # user, assistant(tool_call), user(tool_result), assistant(final)
         assert agent.messages[2].role == "user"
         assert len(agent.messages[2].tool_results) == 1
-        assert "2" in agent.messages[2].tool_results[0].content
+        assert "mutagent" in agent.messages[2].tool_results[0].content
 
     def test_multiple_tool_calls(self, agent):
         """Agent handles multiple tool calls in one response."""
@@ -182,8 +182,8 @@ class TestAgentLoop:
                 role="assistant",
                 content="",
                 tool_calls=[
-                    ToolCall(id="tc_1", name="run_code", arguments={"code": "print('a')"}),
-                    ToolCall(id="tc_2", name="run_code", arguments={"code": "print('b')"}),
+                    ToolCall(id="tc_1", name="inspect_module", arguments={"module_path": "mutagent"}),
+                    ToolCall(id="tc_2", name="inspect_module", arguments={"module_path": "mutagent.agent"}),
                 ],
             ),
             stop_reason="tool_use",
@@ -237,13 +237,13 @@ class TestAgentLoop:
     def test_handle_tool_calls_dispatches(self, agent):
         """handle_tool_calls dispatches each call through the selector."""
         calls = [
-            ToolCall(id="tc_1", name="run_code", arguments={"code": "print(42)"}),
+            ToolCall(id="tc_1", name="define_module", arguments={"module_path": "test_dispatch.mod", "source": "x = 42\n"}),
         ]
         results = agent.handle_tool_calls(calls)
 
         assert len(results) == 1
         assert results[0].tool_call_id == "tc_1"
-        assert "42" in results[0].content
+        assert "OK" in results[0].content
 
 
 # ---------------------------------------------------------------------------

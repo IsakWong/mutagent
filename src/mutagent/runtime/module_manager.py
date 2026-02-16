@@ -37,11 +37,14 @@ class _VirtualLoader:
 class ModuleManager:
     """Manages runtime module patching with source tracking and linecache integration."""
 
-    def __init__(self) -> None:
+    def __init__(self, search_dirs: list[str | Path] | None = None) -> None:
         self._history: dict[str, list[PatchRecord]] = {}
         self._versions: dict[str, int] = {}
         self._virtual_packages: set[str] = set()
         self._patched_modules: set[str] = set()
+        self._saved_paths: dict[str, Path] = {}  # module_path → saved file path
+        # Directories to scan for namespace package __path__ entries
+        self._search_dirs: list[Path] = [Path(d) for d in (search_dirs or [])]
 
     def patch_module(self, module_path: str, source: str) -> types.ModuleType:
         """Patch (or create) a module with new source code.
@@ -123,6 +126,10 @@ class ModuleManager:
         """Get the current version number (0 if never patched)."""
         return self._versions.get(module_path, 0)
 
+    def get_unsaved_modules(self) -> list[str]:
+        """Return module paths that have been patched but not yet saved."""
+        return [m for m in self._patched_modules if m not in self._saved_paths]
+
     def _clear_module_namespace(self, module: types.ModuleType) -> None:
         """Clear a module's namespace, preserving essential attributes."""
         preserve = {
@@ -139,16 +146,32 @@ class ModuleManager:
         linecache.cache[filename] = (len(source), None, lines, filename)
 
     def _ensure_parent_packages(self, module_path: str) -> None:
-        """Create virtual parent packages if they don't exist in sys.modules."""
+        """Create virtual parent packages if they don't exist in sys.modules.
+
+        For namespace package support, virtual packages get ``__path__``
+        entries for every *search_dir* that contains a matching subdirectory.
+        """
         parts = module_path.split(".")
         for i in range(1, len(parts)):
             parent_path = ".".join(parts[:i])
             if parent_path not in sys.modules:
                 pkg = types.ModuleType(parent_path)
-                pkg.__path__ = []
+                pkg.__path__ = self._build_package_path(parent_path)
                 pkg.__package__ = parent_path
                 sys.modules[parent_path] = pkg
                 self._virtual_packages.add(parent_path)
+
+    def _build_package_path(self, package_path: str) -> list[str]:
+        """Build __path__ list for a package by scanning search directories."""
+        sub_parts = package_path.split(".")
+        paths: list[str] = []
+        for search_dir in self._search_dirs:
+            candidate = search_dir.joinpath(*sub_parts)
+            if candidate.is_dir():
+                s = str(candidate)
+                if s not in paths:
+                    paths.append(s)
+        return paths
 
     def _attach_to_parent(self, module_path: str, module: types.ModuleType) -> None:
         """Attach a module as an attribute of its parent package."""
@@ -205,6 +228,9 @@ class ModuleManager:
         # Remove virtual linecache entry (real file will be found normally)
         linecache.cache.pop(virtual_filename, None)
 
+        # Record that this module has been saved
+        self._saved_paths[module_path] = file_path
+
         return file_path
 
     def cleanup(self) -> None:
@@ -222,6 +248,7 @@ class ModuleManager:
         self._versions.clear()
         self._patched_modules.clear()
         self._virtual_packages.clear()
+        self._saved_paths.clear()
 
 
 def _replace_code_filename(code: types.CodeType, old: str, new: str) -> types.CodeType:

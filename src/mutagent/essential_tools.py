@@ -47,45 +47,41 @@ class EssentialTools(mutagent.Declaration):
         """
         return view_source_impl.view_source(self, target)
 
-    def patch_module(self, module_path: str, source: str) -> str:
-        """Patch a module with new source code at runtime.
+    def define_module(self, module_path: str, source: str) -> str:
+        """Define or redefine a Python module in memory.
+
+        Injects module code at runtime. The module takes effect immediately
+        in memory but is NOT automatically persisted to disk. Use save_module
+        to persist validated modules.
 
         Args:
-            module_path: Dotted module path to patch or create.
+            module_path: Dotted module path to create or redefine.
+                Use functional names (e.g. "utils.helpers"), not "mutagent.xxx".
             source: Python source code for the module.
 
         Returns:
             A status message indicating success.
         """
-        return patch_module_impl.patch_module(self, module_path, source)
+        return define_module_impl.define_module(self, module_path, source)
 
-    def save_module(self, module_path: str, file_path: str = "") -> str:
-        """Persist a patched module to the filesystem.
+    def save_module(self, module_path: str, level: str = "project") -> str:
+        """Persist a memory-defined module to disk.
 
         Args:
             module_path: Dotted module path to save.
-            file_path: Optional target directory. Auto-derived if empty.
+            level: Save level.
+                "project" (default): save to ./.mutagent/
+                "user": save to ~/.mutagent/
 
         Returns:
             A status message with the written file path.
         """
-        return save_module_impl.save_module(self, module_path, file_path)
-
-    def run_code(self, code: str) -> str:
-        """Execute a Python code snippet and return the result.
-
-        Args:
-            code: Python code to execute.
-
-        Returns:
-            Captured stdout/stderr and return value, or error traceback.
-        """
-        return run_code_impl.run_code(self, code)
+        return save_module_impl.save_module(self, module_path, level)
 
 
 from mutagent.builtins  import (
-    inspect_module_impl, view_source_impl, patch_module_impl, save_module_impl, run_code_impl
+    inspect_module_impl, view_source_impl, define_module_impl, save_module_impl
 )
 mutagent.register_module_impls(
-    inspect_module_impl, view_source_impl, patch_module_impl, save_module_impl, run_code_impl
+    inspect_module_impl, view_source_impl, define_module_impl, save_module_impl
 )

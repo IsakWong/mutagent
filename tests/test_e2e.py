@@ -112,8 +112,8 @@ class TestEndToEnd:
         agent = _create_test_agent(api_key="test-key")
         yield agent
 
-    def test_inspect_then_patch_then_run(self, agent, tmp_path):
-        """Simulate: Agent inspects module -> patches code -> runs code -> saves."""
+    def test_inspect_then_patch_then_save(self, agent, tmp_path):
+        """Simulate: Agent inspects module -> patches code -> saves."""
         # Step 1: LLM asks to inspect a module
         inspect_response = Response(
             message=Message(
@@ -135,7 +135,7 @@ class TestEndToEnd:
                 content="I'll create a helper module.",
                 tool_calls=[ToolCall(
                     id="tc_2",
-                    name="patch_module",
+                    name="define_module",
                     arguments={
                         "module_path": "test_e2e.helper",
                         "source": "def add(a, b):\n    return a + b\n",
@@ -145,40 +145,24 @@ class TestEndToEnd:
             stop_reason="tool_use",
         )
 
-        # Step 3: LLM runs the code to verify
-        run_response = Response(
-            message=Message(
-                role="assistant",
-                content="Let me verify the module works.",
-                tool_calls=[ToolCall(
-                    id="tc_3",
-                    name="run_code",
-                    arguments={
-                        "code": "from test_e2e.helper import add\nprint(add(2, 3))",
-                    },
-                )],
-            ),
-            stop_reason="tool_use",
-        )
-
-        # Step 4: LLM saves the module
+        # Step 3: LLM saves the module
         save_response = Response(
             message=Message(
                 role="assistant",
                 content="Saving the module.",
                 tool_calls=[ToolCall(
-                    id="tc_4",
+                    id="tc_3",
                     name="save_module",
                     arguments={
                         "module_path": "test_e2e.helper",
-                        "file_path": str(tmp_path),
+                        "level": "project",
                     },
                 )],
             ),
             stop_reason="tool_use",
         )
 
-        # Step 5: Final response
+        # Step 4: Final response
         final_response = Response(
             message=Message(
                 role="assistant",
@@ -190,7 +174,6 @@ class TestEndToEnd:
         agent.client.send_message = _make_mock_send([
             inspect_response,
             patch_response,
-            run_response,
             save_response,
             final_response,
         ])
@@ -201,7 +184,7 @@ class TestEndToEnd:
         assert "Done" in result
 
         # Verify the tool interactions happened
-        assert len(agent.messages) == 10  # user + 4*(assistant+tool_result) + final_assistant
+        assert len(agent.messages) == 8  # user + 3*(assistant+tool_result) + final_assistant
 
         # Verify inspect result was in messages
         inspect_result = agent.messages[2].tool_results[0]
@@ -211,18 +194,17 @@ class TestEndToEnd:
         patch_result = agent.messages[4].tool_results[0]
         assert "OK" in patch_result.content
 
-        # Verify run result
-        run_result = agent.messages[6].tool_results[0]
-        assert "5" in run_result.content
-
         # Verify save result
-        save_result = agent.messages[8].tool_results[0]
+        save_result = agent.messages[6].tool_results[0]
         assert "OK" in save_result.content
 
-        # Verify file was actually saved
-        saved_file = tmp_path / "test_e2e" / "helper.py"
+        # Verify file was actually saved to .mutagent/ (project level)
+        saved_file = Path.cwd() / ".mutagent" / "test_e2e" / "helper.py"
         assert saved_file.exists()
         assert "def add" in saved_file.read_text()
+        # Clean up
+        import shutil
+        shutil.rmtree(Path.cwd() / ".mutagent" / "test_e2e", ignore_errors=True)
 
     def test_view_source_of_patched_module(self, agent):
         """Agent patches a module then views its source."""
@@ -233,7 +215,7 @@ class TestEndToEnd:
                 content="",
                 tool_calls=[ToolCall(
                     id="tc_1",
-                    name="patch_module",
+                    name="define_module",
                     arguments={
                         "module_path": "test_e2e.src",
                         "source": "class Greeter:\n    def greet(self):\n        return 'hi'\n",
@@ -319,7 +301,7 @@ class TestSelfEvolution:
                 content="I'll create a math tools module.",
                 tool_calls=[ToolCall(
                     id="tc_1",
-                    name="patch_module",
+                    name="define_module",
                     arguments={
                         "module_path": "user_tools.math_tools",
                         "source": (
@@ -343,7 +325,7 @@ class TestSelfEvolution:
                 content="Now I'll implement the factorial method.",
                 tool_calls=[ToolCall(
                     id="tc_2",
-                    name="patch_module",
+                    name="define_module",
                     arguments={
                         "module_path": "user_tools.math_tools_impl",
                         "source": (
@@ -363,34 +345,14 @@ class TestSelfEvolution:
             stop_reason="tool_use",
         )
 
-        # Step 3: Agent verifies the new tool works via run_code
-        verify_resp = Response(
-            message=Message(
-                role="assistant",
-                content="Let me verify it works.",
-                tool_calls=[ToolCall(
-                    id="tc_3",
-                    name="run_code",
-                    arguments={
-                        "code": (
-                            "from user_tools.math_tools import MathTools\n"
-                            "mt = MathTools()\n"
-                            "print(mt.factorial(5))\n"
-                        ),
-                    },
-                )],
-            ),
-            stop_reason="tool_use",
-        )
-
-        # Step 4: Agent creates a SEPARATE override module for ToolSelector
+        # Step 3: Agent extends ToolSelector to include the new tool
         patch_selector_resp = Response(
             message=Message(
                 role="assistant",
                 content="Now I'll extend the ToolSelector to include the new tool.",
                 tool_calls=[ToolCall(
-                    id="tc_4",
-                    name="patch_module",
+                    id="tc_3",
+                    name="define_module",
                     arguments={
                         "module_path": "user_tools.selector_ext",
                         "source": (
@@ -430,13 +392,13 @@ class TestSelfEvolution:
             stop_reason="tool_use",
         )
 
-        # Step 5: Agent uses the new tool directly (dispatched by patched ToolSelector)
+        # Step 4: Agent uses the new tool directly (dispatched by patched ToolSelector)
         use_new_tool_resp = Response(
             message=Message(
                 role="assistant",
                 content="Let me compute factorial(6).",
                 tool_calls=[ToolCall(
-                    id="tc_5",
+                    id="tc_4",
                     name="factorial",
                     arguments={"n": 6},
                 )],
@@ -444,7 +406,7 @@ class TestSelfEvolution:
             stop_reason="tool_use",
         )
 
-        # Step 6: Final response
+        # Step 5: Final response
         final_resp = Response(
             message=Message(
                 role="assistant",
@@ -456,7 +418,6 @@ class TestSelfEvolution:
         agent.client.send_message = _make_mock_send([
             create_decl_resp,
             create_impl_resp,
-            verify_resp,
             patch_selector_resp,
             use_new_tool_resp,
             final_resp,
@@ -467,11 +428,7 @@ class TestSelfEvolution:
         # Verify the full workflow completed
         assert "720" in result
 
-        # Verify run_code result: factorial(5) = 120
-        run_result = agent.messages[6].tool_results[0]
-        assert "120" in run_result.content
-
         # Verify the new tool was dispatched and returned correct result
-        factorial_result = agent.messages[10].tool_results[0]
+        factorial_result = agent.messages[8].tool_results[0]
         assert "720" in factorial_result.content
         assert factorial_result.is_error is False
