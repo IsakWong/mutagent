@@ -8,6 +8,8 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
+from pathlib import Path
+
 import mutagent
 from mutagent.config import Config
 
@@ -15,8 +17,8 @@ if TYPE_CHECKING:
     from mutagent.agent import Agent
 
 
-class Main(mutagent.Object):
-    """Main entry point.  Override via ``@impl`` for custom UI (e.g. TUI).
+class App(mutagent.Object):
+    """App entry point.  Override via ``@impl`` for custom UI (e.g. TUI).
 
     Attributes:
         config: The loaded Config object.
@@ -25,6 +27,18 @@ class Main(mutagent.Object):
 
     config: Config
     agent: Agent
+
+    def load_config(self, config_path):
+        """Load configuration from the given path and store in ``self.config``.
+
+        Override if you want to control config loading (e.g. different path,
+        different format, etc.).  The default implementation uses
+        ``Config.load()`` which scans standard locations.
+
+        Args:
+            config_path: Path to the config file (not used by default).
+        """
+        ...
 
     def setup_agent(self, system_prompt: str = "") -> Agent:
         """Initialise the session Agent and store it in ``self.agent``.
@@ -51,32 +65,14 @@ class Main(mutagent.Object):
 
 def main() -> None:
     """Bootstrap mutagent.  Not overridable.
-
-    Steps 1-5 are the bootstrap phase (plain Python, no @impl dependency).
-    Step 6 calls the overridable ``Main.run()``.
     """
-    # 1. Load config (plain Python)
-    config = Config.load()
+    # 1. Load built-in implementations (and any auto-discovered ones)
+    from . import builtins
+    builtins.load()
 
-    # 2. Set environment variables
-    for _config_dir, data in config._layers:
-        for key, value in data.get("env", {}).items():
-            os.environ[key] = value
+    # 2. Create app
+    app = App()
+    app.load_config(".mutagent/config.json")
 
-    # 3. Extend sys.path (paths already resolved to absolute in Config.load)
-    for _config_dir, data in config._layers:
-        for p in data.get("path", []):
-            if p not in sys.path:
-                sys.path.insert(0, p)
-
-    # 4. Load builtins (registers all @impl, including Config and Main)
-    import mutagent.builtins  # noqa: F401
-
-    # 5. Load extension modules (may override @impl)
-    for _config_dir, data in config._layers:
-        for module_name in data.get("modules", []):
-            importlib.import_module(module_name)
-
-    # 6. Create Main and run (overridable)
-    entry = Main(config=config)
-    asyncio.run(entry.run())
+    # 3. Run app
+    asyncio.run(app.run())

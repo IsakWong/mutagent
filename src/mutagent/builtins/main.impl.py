@@ -1,15 +1,18 @@
-"""Default implementation for mutagent.main.Main methods."""
+"""Default implementation for mutagent.main.App methods."""
 
 from __future__ import annotations
 
 import asyncio
+import importlib
+import os
 import sys
 
 import mutagent
+from mutagent.config import Config
 from mutagent.agent import Agent
 from mutagent.client import LLMClient
 from mutagent.essential_tools import EssentialTools
-from mutagent.main import Main
+from mutagent.main import App
 from mutagent.messages import InputEvent
 from mutagent.runtime.module_manager import ModuleManager
 from mutagent.selector import ToolSelector
@@ -58,8 +61,25 @@ You can evolve yourself:
 - Use Chinese or English based on the user's language.
 """
 
+@mutagent.impl(App.load_config)
+def load_config(self, config_path) -> None:
+    self.config = Config.load(config_path)
 
-@mutagent.impl(Main.setup_agent)
+    # Set environment variables from config (later layers override earlier ones)
+    for key, value in self.config.get("env", {}).items():
+        os.environ[key] = value
+
+    # Extend sys.path (paths already resolved to absolute in Config.load)
+    for p in self.config.get("path", []):
+        if p not in sys.path:
+            sys.path.insert(0, p)
+
+    # Load extension modules (may override @impl)
+    for module_name in self.config.get("modules", []):
+        importlib.import_module(module_name)
+
+
+@mutagent.impl(App.setup_agent)
 def setup_agent(self, system_prompt: str = "") -> Agent:
     model = self.config.get_model()
     module_manager = ModuleManager()
@@ -85,7 +105,7 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
     return self.agent
 
 
-@mutagent.impl(Main.run)
+@mutagent.impl(App.run)
 async def run(self) -> None:
     self.setup_agent(system_prompt=SYSTEM_PROMPT)
     model = self.config.get_model()
