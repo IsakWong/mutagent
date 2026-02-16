@@ -36,7 +36,7 @@ You have 5 essential tools:
 When modifying code, follow this cycle:
 1. **inspect_module** — Understand the current structure
 2. **view_source** — Read the specific code to change
-3. **patch_module** — Apply changes in runtime (with @impl override=True for existing methods)
+3. **patch_module** — Apply changes in runtime (later @impl registrations auto-override existing ones)
 4. **run_code** — Verify the change works
 5. **save_module** — Persist to file once validated
 
@@ -49,7 +49,7 @@ When modifying code, follow this cycle:
 
 ## Self-Evolution
 You can evolve yourself:
-- Override any existing tool implementation: patch a new _impl.py with @impl(Method, override=True)
+- Override any existing tool implementation: patch a new _impl.py with @impl(Method) — later registrations auto-override
 - Create entirely new tool classes: define a new mutagent.Declaration subclass with method stubs, then provide @impl
 - Extend ToolSelector: patch its get_tools/dispatch to include new tools
 

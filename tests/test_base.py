@@ -47,13 +47,14 @@ class TestMutagentDeclaration:
         declared = getattr(Service, _DECLARED_METHODS, set())
         assert "process" in declared
 
-    def test_stub_method_raises_not_implemented(self):
+    def test_stub_method_is_default_impl(self):
         class Handler(mutagent.Declaration):
             def handle(self) -> None: ...
 
         h = Handler()
-        with pytest.raises(NotImplementedError):
-            h.handle()
+        # In mutobj, the original function body is kept as default impl
+        # A `...` body executes and returns None
+        assert h.handle() is None
 
     def test_impl_works(self):
         class Greeter(mutagent.Declaration):
@@ -79,7 +80,8 @@ class TestMutagentDeclaration:
         c = Calc()
         assert c.compute(5) == 6
 
-        @mutagent.impl(Calc.compute, override=True)
+        # In mutobj, later registrations automatically become the active impl
+        @mutagent.impl(Calc.compute)
         def compute_v2(self, x: int) -> int:
             return x * 2
 

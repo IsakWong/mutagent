@@ -3,17 +3,12 @@
 import linecache
 import pytest
 import mutagent
-from mutobj.core import _method_registry, _attribute_registry, _DECLARED_METHODS, _class_registry
+from mutobj.core import _impl_chain, _attribute_registry, _DECLARED_METHODS, _class_registry
 
 
 def _exec_class(source: str, module_name: str = "test_virtual"):
-    """Helper: exec source code that defines a class, simulating module re-execution.
-
-    Injects source into linecache so inspect.getsource() works,
-    which is required for mutobj's stub method detection.
-    """
+    """Helper: exec source code that defines a class, simulating module re-execution."""
     filename = f"mutagent://{module_name}"
-    # Inject into linecache so inspect.getsource() works for stub detection
     lines = [line + "\n" for line in source.splitlines()]
     linecache.cache[filename] = (len(source), None, lines, filename)
 
@@ -111,7 +106,7 @@ class TestInPlaceRedefinition:
         obj = cls()
         assert obj.work() == "working"
 
-        # Redefine the class (adds a new stub method)
+        # Redefine the class (adds a new method)
         g2 = _exec_class(
             "class Worker(mutagent.Declaration):\n"
             "    def work(self) -> str: ...\n"
@@ -123,9 +118,8 @@ class TestInPlaceRedefinition:
         # Old impl should still work
         assert obj.work() == "working"
 
-        # New stub should raise
-        with pytest.raises(NotImplementedError):
-            obj.rest()
+        # New method has default impl (returns None)
+        assert obj.rest() is None
 
     def test_existing_instances_see_new_stubs(self):
         g1 = _exec_class(
@@ -175,7 +169,8 @@ class TestInPlaceRedefinition:
         )
         cls = g1["Migr"]
         assert cls in _attribute_registry
-        assert cls in _method_registry
+        # _impl_chain uses (cls, method_name) as key
+        assert any(c is cls for c, _ in _impl_chain)
 
         # Redefine
         g2 = _exec_class(
@@ -189,4 +184,4 @@ class TestInPlaceRedefinition:
 
         # Registries should point to existing class
         assert cls in _attribute_registry
-        assert cls in _method_registry
+        assert any(c is cls for c, _ in _impl_chain)

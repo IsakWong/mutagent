@@ -71,8 +71,8 @@ class TestPatchModule:
         mgr.patch_module("test_pkg.svc_impl", source_impl2)
         assert obj.run() == "v2"
 
-    def test_repatch_without_impl_restores_stub(self, mgr):
-        """When an impl module is repatched without @impl, method reverts to stub."""
+    def test_repatch_without_impl_restores_default(self, mgr):
+        """When an impl module is repatched without @impl, method reverts to default impl."""
         source_decl = (
             "import mutagent\n"
             "class Worker(mutagent.Declaration):\n"
@@ -96,9 +96,8 @@ class TestPatchModule:
         # Repatch impl module with code that does NOT register any @impl
         mgr.patch_module("test_pkg.worker_impl", "# impl removed\n")
 
-        # Method should revert to stub (NotImplementedError)
-        with pytest.raises(NotImplementedError):
-            obj.do_work()
+        # Method should revert to default impl (the original `...` body returns None)
+        assert obj.do_work() is None
 
     def test_parent_packages_created(self, mgr):
         mgr.patch_module("a.b.c.deep", "val = True\n")
