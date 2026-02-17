@@ -15,7 +15,9 @@ from mutagent.essential_tools import EssentialTools
 from mutagent.main import App
 from mutagent.messages import InputEvent
 from mutagent.runtime.module_manager import ModuleManager
-from mutagent.runtime.log_store import LogStore, LogStoreHandler, ToolLogCaptureHandler
+from mutagent.runtime.log_store import (
+    LogStore, LogStoreHandler, SingleLineFormatter, ToolLogCaptureHandler,
+)
 from mutagent.runtime.api_recorder import ApiRecorder
 from mutagent.selector import ToolSelector
 
@@ -122,28 +124,29 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
     # 2. Configure Python logging
     root_logger = logging.getLogger("mutagent")
     root_logger.setLevel(logging.DEBUG)
-    log_formatter = logging.Formatter(
-        "%(asctime)s %(levelname)-5s %(name)s — %(message)s"
-    )
 
-    # Memory handler
+    # Memory handler — message only (timestamp stored in LogEntry.timestamp)
     mem_handler = LogStoreHandler(log_store)
-    mem_handler.setFormatter(log_formatter)
+    mem_handler.setFormatter(logging.Formatter("%(message)s"))
     root_logger.addHandler(mem_handler)
 
     # 3. File handler (default on)
     if self.config.get("logging.file_log", True):
         log_dir.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(
-            log_dir / f"log_{session_ts}.log", encoding="utf-8"
+            log_dir / f"{session_ts}-log.log", encoding="utf-8"
         )
         file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(log_formatter)
+        file_handler.setFormatter(SingleLineFormatter(
+            "%(asctime)s %(levelname)-8s %(name)s - %(message)s"
+        ))
         root_logger.addHandler(file_handler)
 
     # 4. Tool log capture handler (always installed, activated via flag)
     capture_handler = ToolLogCaptureHandler()
-    capture_handler.setFormatter(log_formatter)
+    capture_handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-8s %(name)s - %(message)s"
+    ))
     root_logger.addHandler(capture_handler)
 
     logger.info("Logging initialized (session=%s)", session_ts)

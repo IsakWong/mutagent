@@ -33,7 +33,7 @@ class ApiRecorder:
     def _ensure_file(self) -> IO[str]:
         if self._file is None:
             self._log_dir.mkdir(parents=True, exist_ok=True)
-            path = self._log_dir / f"api_{self._session_ts}.jsonl"
+            path = self._log_dir / f"{self._session_ts}-api.jsonl"
             self._file = open(path, "a", encoding="utf-8")
         return self._file
 

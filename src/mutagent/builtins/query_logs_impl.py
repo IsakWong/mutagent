@@ -39,7 +39,7 @@ def query_logs(
         for entry in entries:
             ts = datetime.fromtimestamp(entry.timestamp).strftime("%Y-%m-%d %H:%M:%S")
             parts.append(
-                f"{ts} {entry.level:<5s} {entry.logger_name:<20s} — {entry.message}"
+                f"{ts} {entry.level:<8s} {entry.logger_name:<20s} - {entry.message}"
             )
         parts.append("")
         parts.append(f"(showing {len(entries)} of {total} entries, newest first)")

@@ -192,7 +192,7 @@ class TestApiRecorder:
         rec.start_session(model="test-model", system_prompt="You are test", tools=[])
         rec.close()
 
-        path = tmp_path / "api_20260217_103000.jsonl"
+        path = tmp_path / "20260217_103000-api.jsonl"
         assert path.exists()
         lines = path.read_text(encoding="utf-8").strip().split("\n")
         assert len(lines) == 1
@@ -213,7 +213,7 @@ class TestApiRecorder:
         )
         rec.close()
 
-        lines = (tmp_path / "api_20260217_110000.jsonl").read_text(encoding="utf-8").strip().split("\n")
+        lines = (tmp_path / "20260217_110000-api.jsonl").read_text(encoding="utf-8").strip().split("\n")
         call_data = json.loads(lines[1])
         assert call_data["type"] == "call"
         assert "input" in call_data
@@ -237,7 +237,7 @@ class TestApiRecorder:
         )
         rec.close()
 
-        lines = (tmp_path / "api_20260217_120000.jsonl").read_text(encoding="utf-8").strip().split("\n")
+        lines = (tmp_path / "20260217_120000-api.jsonl").read_text(encoding="utf-8").strip().split("\n")
         call_data = json.loads(lines[1])
         assert "messages" in call_data
         assert "input" not in call_data
@@ -249,7 +249,7 @@ class TestApiRecorder:
         rec = ApiRecorder(log_dir, session_ts="20260217_130000")
         rec.start_session(model="m", system_prompt="s", tools=[])
         rec.close()
-        assert (log_dir / "api_20260217_130000.jsonl").exists()
+        assert (log_dir / "20260217_130000-api.jsonl").exists()
 
     def test_close_is_idempotent(self, tmp_path):
         rec = ApiRecorder(tmp_path, session_ts="20260217_140000")
@@ -382,7 +382,7 @@ class TestLogFileIntegration:
 
     def test_file_handler_writes_logs(self, tmp_path):
         """Verify FileHandler produces a log file alongside LogStore."""
-        log_file = tmp_path / "log_20260217_100000.log"
+        log_file = tmp_path / "20260217_100000-log.log"
         file_handler = logging.FileHandler(log_file, encoding="utf-8")
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(

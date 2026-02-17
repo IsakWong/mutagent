@@ -64,7 +64,10 @@ def run(
                     capture = _get_tool_capture_enabled(self)
                     for call in response.message.tool_calls:
                         logger.info("Executing tool: %s", call.name)
-                        logger.debug("Tool args: %s", call.arguments)
+                        args_str = str(call.arguments)
+                        if len(args_str) > 200:
+                            args_str = args_str[:200] + f"...({len(args_str)} chars total)"
+                        logger.debug("Tool args: %s", args_str)
                         yield StreamEvent(type="tool_exec_start", tool_call=call)
 
                         if capture:

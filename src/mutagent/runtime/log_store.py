@@ -115,3 +115,18 @@ class ToolLogCaptureHandler(logging.Handler):
         buf = _tool_log_buffer.get()
         if buf is not None:
             buf.append(self.format(record))
+
+
+class SingleLineFormatter(logging.Formatter):
+    """Formatter that converts multiline messages into continuation-line format.
+
+    Newlines in the formatted message are replaced with ``\\n\\t`` so that
+    each log entry in the file starts with a timestamp and continuation
+    lines are prefixed with a tab character.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        text = super().format(record)
+        # Replace newlines after the first line with \n\t
+        # The first line is the standard log format; subsequent lines get tab prefix
+        return text.replace("\n", "\n\t")

@@ -15,7 +15,8 @@ def define_module(self: EssentialTools, module_path: str, source: str) -> str:
         self.module_manager.patch_module(module_path, source)
         version = self.module_manager.get_version(module_path)
         logger.info("Module %s defined (v%d)", module_path, version)
-        logger.debug("Source for %s:\n%s", module_path, source)
+        logger.debug("Source for %s (%d lines, %d bytes)",
+                     module_path, source.count('\n') + 1, len(source))
         return f"OK: {module_path} defined (v{version})"
     except Exception as e:
         logger.error("Failed to define %s: %s: %s", module_path, type(e).__name__, e)
