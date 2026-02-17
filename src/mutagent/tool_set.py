@@ -1,0 +1,97 @@
+"""mutagent.tool_set -- ToolSet declaration."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Callable
+
+import mutagent
+
+if TYPE_CHECKING:
+    from mutagent.messages import ToolCall, ToolResult, ToolSchema
+
+
+@dataclass
+class ToolEntry:
+    """A registered tool entry.
+
+    Attributes:
+        name: Tool name (unique identifier).
+        callable: The actual callable (bound method or function).
+        schema: ToolSchema for LLM API.
+        source: Source object reference (for batch removal by source).
+    """
+
+    name: str
+    callable: Callable
+    schema: ToolSchema
+    source: Any
+
+
+class ToolSet(mutagent.Declaration):
+    """Tool set manager for an Agent.
+
+    Manages the available tools for an Agent, providing dynamic
+    add/remove/query capabilities. Replaces the static ToolSelector.
+
+    Tools can be registered from object instances (registering their
+    public methods) or from individual callables.
+    """
+
+    def add(self, source: Any, methods: list[str] | None = None) -> None:
+        """Add tools from a source.
+
+        Args:
+            source: Tool source, can be:
+                - An object instance: register its public methods as tools.
+                - A single callable: register as one tool.
+            methods: When source is an object, specify which method names
+                to register. None registers all public methods defined
+                directly on the class (not inherited).
+        """
+        return tool_set_impl.add(self, source, methods=methods)
+
+    def remove(self, tool_name: str) -> bool:
+        """Remove a tool by name.
+
+        Args:
+            tool_name: Name of the tool to remove.
+
+        Returns:
+            True if the tool was found and removed, False otherwise.
+        """
+        return tool_set_impl.remove(self, tool_name)
+
+    def query(self, tool_name: str) -> ToolSchema | None:
+        """Query a tool's schema by name.
+
+        Args:
+            tool_name: Name of the tool to query.
+
+        Returns:
+            The ToolSchema if found, None otherwise.
+        """
+        return tool_set_impl.query(self, tool_name)
+
+    def get_tools(self) -> list[ToolSchema]:
+        """Get all available tool schemas for the LLM API.
+
+        Returns:
+            List of ToolSchema objects.
+        """
+        return tool_set_impl.get_tools(self)
+
+    def dispatch(self, tool_call: ToolCall) -> ToolResult:
+        """Dispatch a tool call to the corresponding implementation.
+
+        Args:
+            tool_call: The tool call from the LLM.
+
+        Returns:
+            The result of executing the tool.
+        """
+        return tool_set_impl.dispatch(self, tool_call)
+
+
+from .builtins import tool_set_impl
+mutagent.register_module_impls(tool_set_impl)

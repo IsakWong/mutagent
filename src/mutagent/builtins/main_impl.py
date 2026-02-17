@@ -11,6 +11,7 @@ import mutagent
 from mutagent.config import Config
 from mutagent.agent import Agent
 from mutagent.client import LLMClient
+from mutagent.delegate import DelegateTool
 from mutagent.essential_tools import EssentialTools
 from mutagent.main import App
 from mutagent.messages import InputEvent
@@ -19,7 +20,7 @@ from mutagent.runtime.log_store import (
     LogStore, LogStoreHandler, SingleLineFormatter, ToolLogCaptureHandler,
 )
 from mutagent.runtime.api_recorder import ApiRecorder
-from mutagent.selector import ToolSelector
+from mutagent.tool_set import ToolSet
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +46,17 @@ When modifying code, follow this cycle:
 1. **inspect_module** — Understand the current structure
 2. **view_source** — Read the specific code to change
 3. **define_module** — Apply changes in runtime (module is in memory only)
-4. **inspect_module** — Check unsaved modules list (call with no arguments)
-5. **save_module** — Persist to disk once validated
+4. **inspect_module** — Verify the module structure is correct
+5. **view_source** — Verify the code was applied as expected
+6. **save_module** — Persist to disk once validated
+
+Do NOT create throwaway test modules. Validate changes by inspecting and viewing source.
 
 ## Module Naming
 - New modules should use **functional names** based on their purpose (e.g. "web_search", "file_utils", "math_tools").
 - Do NOT place new modules under the "mutagent" namespace. The mutagent namespace is for the framework itself.
+- NEVER redefine existing mutagent.* modules with define_module — this replaces the entire module. \
+To change a specific behavior, create a new _impl module and use @impl to override just that method.
 - Modules are saved to .mutagent/ directories which are automatically in sys.path.
 
 ## Key Concepts
@@ -69,9 +75,10 @@ When modifying code, follow this cycle:
 
 ## Self-Evolution
 You can evolve yourself:
-- Override any existing tool implementation: define a new _impl.py with @impl(Method) — later registrations auto-override
+- Override any existing tool implementation: create a NEW module (e.g. "my_agent_impl") with @impl(Agent.run), \
+then define_module + save_module. Do NOT redefine mutagent.agent or mutagent.builtins.* — later @impl registrations auto-override.
 - Create entirely new tool classes: define a new mutagent.Declaration subclass with method stubs, then provide @impl
-- Extend ToolSelector: define its get_tools/dispatch to include new tools
+- Extend ToolSet: add new tools to the Agent's tool set
 
 ## Guidelines
 - When redefining declarations, remember DeclarationMeta preserves class identity.
@@ -166,7 +173,8 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
     ]
     module_manager = ModuleManager(search_dirs=search_dirs)
     tools = EssentialTools(module_manager=module_manager, log_store=log_store)
-    selector = ToolSelector(essential_tools=tools)
+    tool_set = ToolSet()
+    tool_set.add(tools)
     client = LLMClient(
         model=model.get("model_id", ""),
         api_key=model.get("auth_token", ""),
@@ -174,10 +182,52 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
         api_recorder=api_recorder,
     )
 
+    # --- Sub-Agents & DelegateTool ---
+    agents_config = self.config.get("agents", {})
+    if agents_config:
+        sub_agents = {}
+        for agent_name, agent_conf in agents_config.items():
+            # Create sub-agent ToolSet with specified tools from EssentialTools
+            sub_tool_set = ToolSet()
+            sub_tool_methods = agent_conf.get("tools", [])
+            if sub_tool_methods:
+                sub_tool_set.add(tools, methods=sub_tool_methods)
+            else:
+                sub_tool_set.add(tools)
+
+            # Use specified model or share the main client
+            sub_model_name = agent_conf.get("model")
+            if sub_model_name:
+                sub_model = self.config.get_model(sub_model_name)
+                sub_client = LLMClient(
+                    model=sub_model.get("model_id", ""),
+                    api_key=sub_model.get("auth_token", ""),
+                    base_url=sub_model.get("base_url", ""),
+                    api_recorder=api_recorder,
+                )
+            else:
+                sub_client = client
+
+            sub_prompt = agent_conf.get("system_prompt", f"You are a sub-agent named '{agent_name}'.")
+            sub_agent = Agent(
+                client=sub_client,
+                tool_set=sub_tool_set,
+                system_prompt=sub_prompt,
+                messages=[],
+            )
+            sub_tool_set.agent = sub_agent
+            sub_agents[agent_name] = sub_agent
+            logger.info("Sub-agent '%s' created (tools=%s)", agent_name,
+                        [t.name for t in sub_tool_set.get_tools()])
+
+        delegate_tool = DelegateTool(agents=sub_agents)
+        tool_set.add(delegate_tool, methods=["delegate"])
+        logger.info("DelegateTool registered with %d sub-agents", len(sub_agents))
+
     # Record session metadata
     if api_recorder is not None:
         effective_prompt = system_prompt or SYSTEM_PROMPT
-        tool_schemas = selector.get_tools({})
+        tool_schemas = tool_set.get_tools()
         api_recorder.start_session(
             model=client.model,
             system_prompt=effective_prompt,
@@ -192,10 +242,11 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
         )
     self.agent = Agent(
         client=client,
-        tool_selector=selector,
+        tool_set=tool_set,
         system_prompt=system_prompt,
         messages=[],
     )
+    tool_set.agent = self.agent
     return self.agent
 
 

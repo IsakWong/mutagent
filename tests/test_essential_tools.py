@@ -83,6 +83,17 @@ class TestDefineModule:
         result = tools.define_module("test_tool_patch.bad", "def f(\n")
         assert "Error" in result
 
+    def test_define_mutagent_module_warns(self, tools):
+        result = tools.define_module("mutagent.test_warn_mod", "x = 1\n")
+        assert "OK" in result
+        assert "Warning" in result
+        assert "@impl" in result
+
+    def test_define_normal_module_no_warning(self, tools):
+        result = tools.define_module("normal_mod", "x = 1\n")
+        assert "OK" in result
+        assert "Warning" not in result
+
 
 class TestSaveModule:
 

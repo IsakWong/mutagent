@@ -9,25 +9,25 @@ import mutagent
 if TYPE_CHECKING:
     from mutagent.client import LLMClient
     from mutagent.messages import InputEvent, StreamEvent, ToolCall, ToolResult
-    from mutagent.selector import ToolSelector
+    from mutagent.tool_set import ToolSet
 
 
 class Agent(mutagent.Declaration):
     """Agent manages the conversation loop with an LLM.
 
     The agent sends messages to the LLM, handles tool calls by dispatching
-    them through the ToolSelector, and continues until the LLM signals
+    them through the ToolSet, and continues until the LLM signals
     end_turn.
 
     Attributes:
         client: The LLM client for sending messages.
-        tool_selector: The tool selector for tool discovery and dispatch.
+        tool_set: The tool set for tool management and dispatch.
         system_prompt: System prompt for the LLM.
         messages: Conversation history.
     """
 
     client: LLMClient
-    tool_selector: ToolSelector
+    tool_set: ToolSet
     system_prompt: str
     messages: list
 

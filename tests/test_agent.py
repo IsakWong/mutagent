@@ -18,7 +18,7 @@ from mutagent.messages import (
     ToolSchema,
 )
 from mutagent.runtime.module_manager import ModuleManager
-from mutagent.selector import ToolSelector
+from mutagent.tool_set import ToolSet
 from mutobj.core import DeclarationMeta, _DECLARED_METHODS
 
 import mutagent.builtins  # noqa: F401  -- register all @impl
@@ -65,6 +65,28 @@ def _make_stream_events_for_response(response: Response) -> list[StreamEvent]:
     return events
 
 
+def _make_agent(mock_client=None):
+    """Create an Agent with ToolSet for testing."""
+    if mock_client is None:
+        mock_client = LLMClient(
+            model="test-model",
+            api_key="test-key",
+            base_url="https://api.test.com",
+        )
+    mgr = ModuleManager()
+    tools = EssentialTools(module_manager=mgr)
+    tool_set = ToolSet()
+    tool_set.add(tools)
+    agent = Agent(
+        client=mock_client,
+        tool_set=tool_set,
+        system_prompt="You are a helpful assistant.",
+        messages=[],
+    )
+    tool_set.agent = agent
+    return agent, mgr
+
+
 # ---------------------------------------------------------------------------
 # Declaration tests
 # ---------------------------------------------------------------------------
@@ -102,15 +124,7 @@ class TestAgentLoop:
 
     @pytest.fixture
     def agent(self, mock_client):
-        mgr = ModuleManager()
-        tools = EssentialTools(module_manager=mgr)
-        selector = ToolSelector(essential_tools=tools)
-        agent = Agent(
-            client=mock_client,
-            tool_selector=selector,
-            system_prompt="You are a helpful assistant.",
-            messages=[],
-        )
+        agent, mgr = _make_agent(mock_client)
         yield agent
         mgr.cleanup()
 
@@ -235,7 +249,7 @@ class TestAgentLoop:
         assert collected[1].response is response
 
     def test_handle_tool_calls_dispatches(self, agent):
-        """handle_tool_calls dispatches each call through the selector."""
+        """handle_tool_calls dispatches each call through the tool set."""
         calls = [
             ToolCall(id="tc_1", name="define_module", arguments={"module_path": "test_dispatch.mod", "source": "x = 42\n"}),
         ]
@@ -254,20 +268,7 @@ class TestStreamingEventSequence:
 
     @pytest.fixture
     def agent(self):
-        mgr = ModuleManager()
-        tools = EssentialTools(module_manager=mgr)
-        selector = ToolSelector(essential_tools=tools)
-        client = LLMClient(
-            model="test-model",
-            api_key="test-key",
-            base_url="https://api.test.com",
-        )
-        agent = Agent(
-            client=client,
-            tool_selector=selector,
-            system_prompt="test",
-            messages=[],
-        )
+        agent, mgr = _make_agent()
         yield agent
         mgr.cleanup()
 
@@ -295,7 +296,7 @@ class TestStreamingEventSequence:
             message=Message(
                 role="assistant",
                 content="Thinking...",
-                tool_calls=[ToolCall(id="tc_1", name="run_code", arguments={"code": "1+1"})],
+                tool_calls=[ToolCall(id="tc_1", name="define_module", arguments={"module_path": "test_evt.mod", "source": "x=1\n"})],
             ),
             stop_reason="tool_use",
         )
@@ -313,7 +314,7 @@ class TestStreamingEventSequence:
                 yield StreamEvent(type="text_delta", text="Thinking...")
                 yield StreamEvent(
                     type="tool_use_start",
-                    tool_call=ToolCall(id="tc_1", name="run_code"),
+                    tool_call=ToolCall(id="tc_1", name="define_module"),
                 )
                 yield StreamEvent(type="tool_use_end")
                 yield StreamEvent(type="response_done", response=tool_response)
@@ -340,7 +341,7 @@ class TestStreamingEventSequence:
 
         # Verify tool_exec events carry correct data
         exec_start = events[4]
-        assert exec_start.tool_call.name == "run_code"
+        assert exec_start.tool_call.name == "define_module"
         exec_end = events[5]
         assert exec_end.tool_result is not None
         assert exec_end.tool_result.tool_call_id == "tc_1"
@@ -386,20 +387,7 @@ class TestMultiTurnAndErrorRecovery:
 
     @pytest.fixture
     def agent(self):
-        mgr = ModuleManager()
-        tools = EssentialTools(module_manager=mgr)
-        selector = ToolSelector(essential_tools=tools)
-        client = LLMClient(
-            model="test-model",
-            api_key="test-key",
-            base_url="https://api.test.com",
-        )
-        agent = Agent(
-            client=client,
-            tool_selector=selector,
-            system_prompt="test",
-            messages=[],
-        )
+        agent, mgr = _make_agent()
         yield agent
         mgr.cleanup()
 
@@ -493,20 +481,7 @@ class TestStopReasonToolCallsMismatch:
 
     @pytest.fixture
     def agent(self):
-        mgr = ModuleManager()
-        tools = EssentialTools(module_manager=mgr)
-        selector = ToolSelector(essential_tools=tools)
-        client = LLMClient(
-            model="test-model",
-            api_key="test-key",
-            base_url="https://api.test.com",
-        )
-        agent = Agent(
-            client=client,
-            tool_selector=selector,
-            system_prompt="test",
-            messages=[],
-        )
+        agent, mgr = _make_agent()
         yield agent
         mgr.cleanup()
 

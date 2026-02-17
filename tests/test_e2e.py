@@ -16,7 +16,7 @@ from mutagent.essential_tools import EssentialTools
 from mutagent.main import App
 from mutagent.messages import InputEvent, Message, Response, StreamEvent, ToolCall, ToolResult, ToolSchema
 from mutagent.runtime.module_manager import ModuleManager
-from mutagent.selector import ToolSelector
+from mutagent.tool_set import ToolSet
 
 
 def _create_test_agent(
@@ -267,33 +267,42 @@ class TestEndToEnd:
 
 
 class TestSelfEvolution:
-    """Verify Agent can create new tool modules, patch ToolSelector, and use them."""
+    """Verify Agent can create new tool modules, patch ToolSet, and use them."""
 
     @pytest.fixture
     def agent(self):
         agent = _create_test_agent(api_key="test-key")
         yield agent
         # Cleanup: unregister override impls, remove virtual modules,
-        # then re-load the original selector impl to restore original impls.
-        mgr = agent.tool_selector.essential_tools.module_manager
-        mutobj.unregister_module_impls("user_tools.selector_ext")
-        mgr.cleanup()
-        # Re-execute the original selector impl to restore ToolSelector impls
-        self._reload_selector_impl()
+        # then re-load the original tool_set impl to restore original impls.
+        entries = getattr(agent.tool_set, '_entries', {})
+        # Find EssentialTools source to get module_manager
+        for entry in entries.values():
+            mgr = getattr(entry.source, "module_manager", None)
+            if mgr is not None:
+                break
+        else:
+            mgr = None
+
+        mutobj.unregister_module_impls("user_tools.tool_set_ext")
+        if mgr:
+            mgr.cleanup()
+        # Re-execute the original tool_set impl to restore ToolSet impls
+        self._reload_tool_set_impl()
 
     @staticmethod
-    def _reload_selector_impl():
-        """Re-execute the builtins/selector_impl.py to restore original @impls."""
+    def _reload_tool_set_impl():
+        """Re-execute the builtins/tool_set_impl.py to restore original @impls."""
         from pathlib import Path
-        selector_impl = Path(__file__).resolve().parent.parent / "src" / "mutagent" / "builtins" / "selector_impl.py"
-        source = selector_impl.read_text(encoding="utf-8")
-        mod = sys.modules.get("mutagent.builtins.selector_impl")
+        tool_set_impl_path = Path(__file__).resolve().parent.parent / "src" / "mutagent" / "builtins" / "tool_set_impl.py"
+        source = tool_set_impl_path.read_text(encoding="utf-8")
+        mod = sys.modules.get("mutagent.builtins.tool_set_impl")
         if mod is not None:
-            code = compile(source, str(selector_impl), "exec")
+            code = compile(source, str(tool_set_impl_path), "exec")
             exec(code, mod.__dict__)
 
     def test_create_tool_and_use_it(self, agent):
-        """Self-evolution: Agent creates a new tool class, patches ToolSelector, then uses it."""
+        """Self-evolution: Agent creates a new tool class, patches ToolSet, then uses it."""
         # Step 1: Agent creates a new tool class declaration
         create_decl_resp = Response(
             message=Message(
@@ -345,46 +354,51 @@ class TestSelfEvolution:
             stop_reason="tool_use",
         )
 
-        # Step 3: Agent extends ToolSelector to include the new tool
-        patch_selector_resp = Response(
+        # Step 3: Agent extends ToolSet to include the new tool
+        patch_tool_set_resp = Response(
             message=Message(
                 role="assistant",
-                content="Now I'll extend the ToolSelector to include the new tool.",
+                content="Now I'll extend the ToolSet to include the new tool.",
                 tool_calls=[ToolCall(
                     id="tc_3",
                     name="define_module",
                     arguments={
-                        "module_path": "user_tools.selector_ext",
+                        "module_path": "user_tools.tool_set_ext",
                         "source": (
                             "import mutagent\n"
-                            "from mutagent.selector import ToolSelector\n"
+                            "from mutagent.tool_set import ToolSet\n"
                             "from mutagent.messages import ToolResult\n"
-                            "from mutagent.builtins.selector_impl import make_schema_from_method, _TOOL_METHODS\n"
+                            "from mutagent.builtins.selector_impl import make_schema_from_method\n"
                             "\n"
-                            "@mutagent.impl(ToolSelector.get_tools)\n"
-                            "def get_tools(self, context):\n"
-                            "    schemas = []\n"
-                            "    for name in _TOOL_METHODS:\n"
-                            "        schemas.append(make_schema_from_method(self.essential_tools, name))\n"
+                            "@mutagent.impl(ToolSet.get_tools)\n"
+                            "def get_tools(self):\n"
+                            "    entries = getattr(self, '_entries', {})\n"
+                            "    schemas = [entry.schema for entry in entries.values()]\n"
                             "    from user_tools.math_tools import MathTools\n"
                             "    mt = MathTools()\n"
                             "    schemas.append(make_schema_from_method(mt, 'factorial'))\n"
                             "    return schemas\n"
                             "\n"
-                            "@mutagent.impl(ToolSelector.dispatch)\n"
+                            "@mutagent.impl(ToolSet.dispatch)\n"
                             "def dispatch(self, tool_call):\n"
-                            "    method = getattr(self.essential_tools, tool_call.name, None)\n"
-                            "    if method is None:\n"
-                            "        from user_tools.math_tools import MathTools\n"
-                            "        mt = MathTools()\n"
-                            "        method = getattr(mt, tool_call.name, None)\n"
-                            "    if method is None:\n"
-                            "        return ToolResult(tool_call_id=tool_call.id, content='Unknown tool', is_error=True)\n"
-                            "    try:\n"
-                            "        result = method(**tool_call.arguments)\n"
-                            "        return ToolResult(tool_call_id=tool_call.id, content=str(result))\n"
-                            "    except Exception as e:\n"
-                            "        return ToolResult(tool_call_id=tool_call.id, content=str(e), is_error=True)\n"
+                            "    entries = getattr(self, '_entries', {})\n"
+                            "    entry = entries.get(tool_call.name)\n"
+                            "    if entry is not None:\n"
+                            "        try:\n"
+                            "            result = entry.callable(**tool_call.arguments)\n"
+                            "            return ToolResult(tool_call_id=tool_call.id, content=str(result))\n"
+                            "        except Exception as e:\n"
+                            "            return ToolResult(tool_call_id=tool_call.id, content=str(e), is_error=True)\n"
+                            "    from user_tools.math_tools import MathTools\n"
+                            "    mt = MathTools()\n"
+                            "    method = getattr(mt, tool_call.name, None)\n"
+                            "    if method is not None:\n"
+                            "        try:\n"
+                            "            result = method(**tool_call.arguments)\n"
+                            "            return ToolResult(tool_call_id=tool_call.id, content=str(result))\n"
+                            "        except Exception as e:\n"
+                            "            return ToolResult(tool_call_id=tool_call.id, content=str(e), is_error=True)\n"
+                            "    return ToolResult(tool_call_id=tool_call.id, content='Unknown tool', is_error=True)\n"
                         ),
                     },
                 )],
@@ -392,7 +406,7 @@ class TestSelfEvolution:
             stop_reason="tool_use",
         )
 
-        # Step 4: Agent uses the new tool directly (dispatched by patched ToolSelector)
+        # Step 4: Agent uses the new tool directly (dispatched by patched ToolSet)
         use_new_tool_resp = Response(
             message=Message(
                 role="assistant",
@@ -418,7 +432,7 @@ class TestSelfEvolution:
         agent.client.send_message = _make_mock_send([
             create_decl_resp,
             create_impl_resp,
-            patch_selector_resp,
+            patch_tool_set_resp,
             use_new_tool_resp,
             final_resp,
         ])

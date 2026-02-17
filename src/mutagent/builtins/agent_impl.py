@@ -7,19 +7,21 @@ import mutagent
 from mutagent.agent import Agent
 from mutagent.messages import InputEvent, Message, StreamEvent, ToolCall, ToolResult
 from mutagent.runtime.log_store import _tool_log_buffer
+from mutagent.tool_set import ToolEntry
 
 logger = logging.getLogger(__name__)
 
 
 def _get_tool_capture_enabled(agent: Agent) -> bool:
-    """Check if tool log capture is enabled via the EssentialTools' LogStore."""
-    tools = getattr(agent.tool_selector, "essential_tools", None)
-    if tools is None:
+    """Check if tool log capture is enabled via any registered tool source's LogStore."""
+    entries = getattr(agent.tool_set, '_entries', None)
+    if not entries:
         return False
-    log_store = getattr(tools, "log_store", None)
-    if log_store is None:
-        return False
-    return log_store.tool_capture_enabled
+    for entry in entries.values():
+        log_store = getattr(entry.source, "log_store", None)
+        if log_store is not None:
+            return log_store.tool_capture_enabled
+    return False
 
 
 @mutagent.impl(Agent.run)
@@ -80,7 +82,7 @@ def run(
                             buf: list[str] = []
                             token = _tool_log_buffer.set(buf)
                             try:
-                                result = self.tool_selector.dispatch(call)
+                                result = self.tool_set.dispatch(call)
                             finally:
                                 _tool_log_buffer.reset(token)
                             if buf:
@@ -90,7 +92,7 @@ def run(
                                     is_error=result.is_error,
                                 )
                         else:
-                            result = self.tool_selector.dispatch(call)
+                            result = self.tool_set.dispatch(call)
 
                         logger.info("Tool %s result: %s (%d chars)",
                                     call.name,
@@ -115,7 +117,7 @@ def step(
     self: Agent, stream: bool = True
 ) -> Iterator[StreamEvent]:
     """Execute a single LLM call, yielding streaming events."""
-    tools = self.tool_selector.get_tools({})
+    tools = self.tool_set.get_tools()
     yield from self.client.send_message(
         self.messages, tools, system_prompt=self.system_prompt, stream=stream,
     )
@@ -125,9 +127,9 @@ def step(
 def handle_tool_calls(
     self: Agent, tool_calls: list[ToolCall]
 ) -> list[ToolResult]:
-    """Dispatch tool calls through the selector."""
+    """Dispatch tool calls through the tool set."""
     results = []
     for call in tool_calls:
-        result = self.tool_selector.dispatch(call)
+        result = self.tool_set.dispatch(call)
         results.append(result)
     return results
