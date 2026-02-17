@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 import sys
 
@@ -14,7 +15,11 @@ from mutagent.essential_tools import EssentialTools
 from mutagent.main import App
 from mutagent.messages import InputEvent
 from mutagent.runtime.module_manager import ModuleManager
+from mutagent.runtime.log_store import LogStore, LogStoreHandler, ToolLogCaptureHandler
+from mutagent.runtime.api_recorder import ApiRecorder
 from mutagent.selector import ToolSelector
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
 You are **mutagent**, a self-evolving Python AI Agent framework.
@@ -25,11 +30,13 @@ Your own source code is organized as declarations (.py) with implementations (_i
 and you can inspect, modify, and hot-reload any of it at runtime — including yourself.
 
 ## Core Tools
-You have 4 essential tools:
+You have 5 essential tools:
 - **inspect_module(module_path, depth)** — Browse module structure. Call with no arguments to see unsaved modules.
 - **view_source(target)** — Read source code of any module, class, or function.
 - **define_module(module_path, source)** — Define or redefine a Python module in memory (not persisted until saved).
 - **save_module(module_path, level)** — Persist a module to disk. level="project" (default, ./.mutagent/) or "user" (~/.mutagent/).
+- **query_logs(pattern, level, limit, tool_capture)** — Search logs or configure logging. \
+Use tool_capture="on" to include logs in tool output for debugging.
 
 ## Workflow
 When modifying code, follow this cycle:
@@ -51,6 +58,12 @@ When modifying code, follow this cycle:
 - **DeclarationMeta**: classes that inherit mutagent.Declaration are updated in-place on redefinition (id preserved, isinstance works, @impl survives).
 - **Module path is first-class**: everything is addressed as `package.module.Class.method`.
 - **Namespace packages**: submodules of the same package can live in different .mutagent/ directories (project-level and user-level).
+
+## Debugging
+- All internal logs (DEBUG level) are captured in memory.
+- Use query_logs() to view recent activity or search for specific events.
+- Use query_logs(tool_capture="on") to attach logs to tool results — useful for diagnosing issues.
+- API calls are automatically recorded to .mutagent/logs/ for session replay.
 
 ## Self-Evolution
 You can evolve yourself:
@@ -94,20 +107,80 @@ def load_config(self, config_path) -> None:
 
 @mutagent.impl(App.setup_agent)
 def setup_agent(self, system_prompt: str = "") -> Agent:
-    model = self.config.get_model()
     from pathlib import Path
+    from datetime import datetime
+
+    model = self.config.get_model()
+
+    # --- Logging setup ---
+    session_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_dir = Path(self.config.get("logging.log_dir", ".mutagent/logs"))
+
+    # 1. Create LogStore (in-memory, no capacity limit)
+    log_store = LogStore()
+
+    # 2. Configure Python logging
+    root_logger = logging.getLogger("mutagent")
+    root_logger.setLevel(logging.DEBUG)
+    log_formatter = logging.Formatter(
+        "%(asctime)s %(levelname)-5s %(name)s — %(message)s"
+    )
+
+    # Memory handler
+    mem_handler = LogStoreHandler(log_store)
+    mem_handler.setFormatter(log_formatter)
+    root_logger.addHandler(mem_handler)
+
+    # 3. File handler (default on)
+    if self.config.get("logging.file_log", True):
+        log_dir.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(
+            log_dir / f"log_{session_ts}.log", encoding="utf-8"
+        )
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(log_formatter)
+        root_logger.addHandler(file_handler)
+
+    # 4. Tool log capture handler (always installed, activated via flag)
+    capture_handler = ToolLogCaptureHandler()
+    capture_handler.setFormatter(log_formatter)
+    root_logger.addHandler(capture_handler)
+
+    logger.info("Logging initialized (session=%s)", session_ts)
+
+    # --- API Recorder ---
+    api_recorder = None
+    if self.config.get("logging.api_record", True):
+        log_dir.mkdir(parents=True, exist_ok=True)
+        api_mode = self.config.get("logging.api_record_mode", "incremental")
+        api_recorder = ApiRecorder(log_dir, mode=api_mode, session_ts=session_ts)
+        logger.info("API recorder started (mode=%s)", api_mode)
+
+    # --- Components ---
     search_dirs = [
         Path.home() / ".mutagent",
         Path.cwd() / ".mutagent",
     ]
     module_manager = ModuleManager(search_dirs=search_dirs)
-    tools = EssentialTools(module_manager=module_manager)
+    tools = EssentialTools(module_manager=module_manager, log_store=log_store)
     selector = ToolSelector(essential_tools=tools)
     client = LLMClient(
         model=model.get("model_id", ""),
         api_key=model.get("auth_token", ""),
         base_url=model.get("base_url", ""),
+        api_recorder=api_recorder,
     )
+
+    # Record session metadata
+    if api_recorder is not None:
+        effective_prompt = system_prompt or SYSTEM_PROMPT
+        tool_schemas = selector.get_tools({})
+        api_recorder.start_session(
+            model=client.model,
+            system_prompt=effective_prompt,
+            tools=[{"name": t.name, "description": t.description} for t in tool_schemas],
+        )
+
     if not system_prompt:
         system_prompt = (
             "You are a Python AI Agent with the ability to inspect, modify, "

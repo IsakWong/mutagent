@@ -149,6 +149,7 @@ _TOOL_METHODS = [
     "view_source",
     "define_module",
     "save_module",
+    "query_logs",
 ]
 
 

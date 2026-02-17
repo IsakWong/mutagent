@@ -116,9 +116,9 @@ class TestToolSelectorImpl:
 
     def test_get_tools_returns_schemas(self, selector_with_tools):
         schemas = selector_with_tools.get_tools({})
-        assert len(schemas) == 4
+        assert len(schemas) == 5
         names = {s.name for s in schemas}
-        assert names == {"inspect_module", "view_source", "define_module", "save_module"}
+        assert names == {"inspect_module", "view_source", "define_module", "save_module", "query_logs"}
 
     def test_get_tools_schema_structure(self, selector_with_tools):
         schemas = selector_with_tools.get_tools({})

@@ -1,6 +1,8 @@
 """mutagent.builtins.claude -- Claude API implementation for LLMClient."""
 
 import json
+import logging
+import time
 from typing import Any, Iterator
 
 import requests
@@ -15,6 +17,8 @@ from mutagent.messages import (
     ToolResult,
     ToolSchema,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _messages_to_claude(messages: list[Message]) -> list[dict[str, Any]]:
@@ -113,6 +117,7 @@ def _send_message_no_stream(
     data = resp.json()
     if resp.status_code != 200:
         error_msg = data.get("error", {}).get("message", json.dumps(data))
+        logger.warning("API error (%d): %s", resp.status_code, error_msg)
         yield StreamEvent(
             type="error",
             error=f"Claude API error ({resp.status_code}): {error_msg}",
@@ -153,6 +158,7 @@ def _send_message_stream(
                 error_msg = data.get("error", {}).get("message", json.dumps(data))
             except Exception:
                 error_msg = f"HTTP {resp.status_code}"
+            logger.warning("API stream error (%d): %s", resp.status_code, error_msg)
             yield StreamEvent(
                 type="error",
                 error=f"Claude API error ({resp.status_code}): {error_msg}",
@@ -306,7 +312,58 @@ def send_message(
         "content-type": "application/json",
     }
 
+    logger.info("Sending API request (model=%s, messages=%d)", self.model, len(claude_messages))
+    logger.debug("Payload size: %d bytes", len(json.dumps(payload, ensure_ascii=False)))
+    t0 = time.monotonic()
+
+    response_obj: Response | None = None
     if stream:
-        yield from _send_message_stream(self, payload, headers)
+        for event in _send_message_stream(self, payload, headers):
+            if event.type == "response_done":
+                response_obj = event.response
+            yield event
     else:
-        yield from _send_message_no_stream(self, payload, headers)
+        for event in _send_message_no_stream(self, payload, headers):
+            if event.type == "response_done":
+                response_obj = event.response
+            yield event
+
+    duration_ms = int((time.monotonic() - t0) * 1000)
+
+    if response_obj is not None:
+        logger.info(
+            "API response received (stop_reason=%s, duration=%dms)",
+            response_obj.stop_reason, duration_ms,
+        )
+        logger.debug("Usage: %s", response_obj.usage)
+
+        # Record API call if recorder is available
+        recorder = getattr(self, "api_recorder", None)
+        if recorder is not None:
+            new_message = claude_messages[-1] if claude_messages else {}
+            response_data = _response_to_dict(response_obj)
+            recorder.record_call(
+                messages=claude_messages,
+                new_message=new_message,
+                response=response_data,
+                usage=response_obj.usage,
+                duration_ms=duration_ms,
+            )
+
+
+def _response_to_dict(response: Response) -> dict[str, Any]:
+    """Convert a Response object to a plain dict for recording."""
+    content: list[dict[str, Any]] = []
+    if response.message.content:
+        content.append({"type": "text", "text": response.message.content})
+    for tc in response.message.tool_calls:
+        content.append({
+            "type": "tool_use",
+            "id": tc.id,
+            "name": tc.name,
+            "input": tc.arguments,
+        })
+    return {
+        "content": content,
+        "stop_reason": response.stop_reason,
+    }

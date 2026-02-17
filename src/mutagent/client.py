@@ -8,6 +8,7 @@ import mutagent
 
 if TYPE_CHECKING:
     from mutagent.messages import Message, StreamEvent, ToolSchema
+    from mutagent.runtime.api_recorder import ApiRecorder
 
 
 class LLMClient(mutagent.Declaration):
@@ -21,11 +22,13 @@ class LLMClient(mutagent.Declaration):
         model: Model identifier (e.g. "claude-sonnet-4-20250514").
         api_key: API key for authentication.
         base_url: Base URL for the API endpoint.
+        api_recorder: Optional API call recorder for session logging.
     """
 
     model: str
     api_key: str
     base_url: str
+    api_recorder: ApiRecorder | None
 
     def send_message(
         self,

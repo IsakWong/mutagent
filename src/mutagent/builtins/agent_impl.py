@@ -1,10 +1,25 @@
 """mutagent.builtins.agent -- Agent main loop implementation."""
 
+import logging
 from typing import Iterator
 
 import mutagent
 from mutagent.agent import Agent
 from mutagent.messages import InputEvent, Message, StreamEvent, ToolCall, ToolResult
+from mutagent.runtime.log_store import _tool_log_buffer
+
+logger = logging.getLogger(__name__)
+
+
+def _get_tool_capture_enabled(agent: Agent) -> bool:
+    """Check if tool log capture is enabled via the EssentialTools' LogStore."""
+    tools = getattr(agent.tool_selector, "essential_tools", None)
+    if tools is None:
+        return False
+    log_store = getattr(tools, "log_store", None)
+    if log_store is None:
+        return False
+    return log_store.tool_capture_enabled
 
 
 @mutagent.impl(Agent.run)
@@ -14,6 +29,7 @@ def run(
     """Run the agent conversation loop, consuming input events and yielding output events."""
     for input_event in input_stream:
         if input_event.type == "user_message":
+            logger.info("User message received (%d chars)", len(input_event.text))
             self.messages.append(Message(role="user", content=input_event.text))
 
             while True:
@@ -39,13 +55,39 @@ def run(
 
                 # Add assistant message to history
                 self.messages.append(response.message)
+                logger.info("LLM stop_reason=%s, tool_calls=%d",
+                            response.stop_reason, len(response.message.tool_calls))
 
                 if response.stop_reason == "tool_use" and response.message.tool_calls:
                     # Handle tool calls, yielding execution events
                     results = []
+                    capture = _get_tool_capture_enabled(self)
                     for call in response.message.tool_calls:
+                        logger.info("Executing tool: %s", call.name)
+                        logger.debug("Tool args: %s", call.arguments)
                         yield StreamEvent(type="tool_exec_start", tool_call=call)
-                        result = self.tool_selector.dispatch(call)
+
+                        if capture:
+                            buf: list[str] = []
+                            token = _tool_log_buffer.set(buf)
+                            try:
+                                result = self.tool_selector.dispatch(call)
+                            finally:
+                                _tool_log_buffer.reset(token)
+                            if buf:
+                                result = ToolResult(
+                                    tool_call_id=result.tool_call_id,
+                                    content=result.content + "\n\n[Tool Logs]\n" + "\n".join(buf),
+                                    is_error=result.is_error,
+                                )
+                        else:
+                            result = self.tool_selector.dispatch(call)
+
+                        logger.info("Tool %s result: %s (%d chars)",
+                                    call.name,
+                                    "error" if result.is_error else "ok",
+                                    len(result.content))
+                        logger.debug("Tool result content: %.200s", result.content)
                         yield StreamEvent(
                             type="tool_exec_end", tool_call=call, tool_result=result
                         )

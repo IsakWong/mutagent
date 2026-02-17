@@ -1,9 +1,12 @@
 """mutagent.builtins.save_module -- save_module tool implementation."""
 
+import logging
 from pathlib import Path
 
 import mutagent
 from mutagent.essential_tools import EssentialTools
+
+logger = logging.getLogger(__name__)
 
 _LEVEL_DIRS = {
     "project": lambda: Path.cwd() / ".mutagent",
@@ -20,6 +23,8 @@ def save_module(self: EssentialTools, module_path: str, level: str = "project") 
             return f"Error: unknown level {level!r}. Use 'project' or 'user'."
         directory = dir_factory()
         path = self.module_manager.save_module(module_path, directory)
+        logger.info("Module %s saved to %s", module_path, path)
         return f"OK: {module_path} saved to {path}"
     except Exception as e:
+        logger.error("Failed to save %s: %s: %s", module_path, type(e).__name__, e)
         return f"Error saving {module_path}: {type(e).__name__}: {e}"
