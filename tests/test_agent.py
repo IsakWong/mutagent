@@ -482,3 +482,124 @@ class TestMultiTurnAndErrorRecovery:
         assert agent.messages[0].content == "First"
         assert agent.messages[1].content == "Second"
         assert agent.messages[2].content == "OK now"
+
+
+# ---------------------------------------------------------------------------
+# stop_reason vs tool_calls mismatch tests
+# ---------------------------------------------------------------------------
+
+class TestStopReasonToolCallsMismatch:
+    """Tests for when stop_reason and tool_calls presence disagree."""
+
+    @pytest.fixture
+    def agent(self):
+        mgr = ModuleManager()
+        tools = EssentialTools(module_manager=mgr)
+        selector = ToolSelector(essential_tools=tools)
+        client = LLMClient(
+            model="test-model",
+            api_key="test-key",
+            base_url="https://api.test.com",
+        )
+        agent = Agent(
+            client=client,
+            tool_selector=selector,
+            system_prompt="test",
+            messages=[],
+        )
+        yield agent
+        mgr.cleanup()
+
+    def test_end_turn_with_tool_calls_executes_tools(self, agent):
+        """When stop_reason=end_turn but tool_calls exist, tools should still be executed."""
+        tool_response = Response(
+            message=Message(
+                role="assistant",
+                content="Let me check:",
+                tool_calls=[ToolCall(id="tc_1", name="inspect_module", arguments={})],
+            ),
+            stop_reason="end_turn",  # mismatch: should be tool_use
+        )
+        final_response = Response(
+            message=Message(role="assistant", content="Here are the results."),
+            stop_reason="end_turn",
+        )
+
+        call_idx = 0
+
+        def mock_send(*args, **kwargs):
+            nonlocal call_idx
+            if call_idx == 0:
+                call_idx += 1
+                for e in _make_stream_events_for_response(tool_response):
+                    yield e
+            else:
+                for e in _make_stream_events_for_response(final_response):
+                    yield e
+
+        agent.client.send_message = mock_send
+
+        events = _collect_events(agent.run(_single_input("Check modules")))
+        types = [e.type for e in events]
+
+        # Tool should be executed despite stop_reason=end_turn
+        assert "tool_exec_start" in types
+        assert "tool_exec_end" in types
+        # Full message history: user, assistant(tool_call), user(tool_result), assistant(final)
+        assert len(agent.messages) == 4
+        assert len(agent.messages[2].tool_results) == 1
+
+    def test_end_turn_without_tool_calls_ends_turn(self, agent):
+        """When stop_reason=end_turn and no tool_calls, turn ends normally (regression)."""
+        response = Response(
+            message=Message(role="assistant", content="All done."),
+            stop_reason="end_turn",
+        )
+
+        def mock_send(*args, **kwargs):
+            for e in _make_stream_events_for_response(response):
+                yield e
+
+        agent.client.send_message = mock_send
+
+        events = _collect_events(agent.run(_single_input("Hi")))
+        types = [e.type for e in events]
+
+        assert types == ["text_delta", "response_done", "turn_done"]
+        assert len(agent.messages) == 2
+
+    def test_tool_use_with_tool_calls_still_works(self, agent):
+        """When stop_reason=tool_use and tool_calls exist, behavior unchanged (regression)."""
+        tool_response = Response(
+            message=Message(
+                role="assistant",
+                content="Inspecting...",
+                tool_calls=[ToolCall(id="tc_1", name="inspect_module", arguments={"module_path": "mutagent"})],
+            ),
+            stop_reason="tool_use",
+        )
+        final_response = Response(
+            message=Message(role="assistant", content="Done."),
+            stop_reason="end_turn",
+        )
+
+        call_idx = 0
+
+        def mock_send(*args, **kwargs):
+            nonlocal call_idx
+            if call_idx == 0:
+                call_idx += 1
+                for e in _make_stream_events_for_response(tool_response):
+                    yield e
+            else:
+                for e in _make_stream_events_for_response(final_response):
+                    yield e
+
+        agent.client.send_message = mock_send
+
+        events = _collect_events(agent.run(_single_input("Inspect")))
+        types = [e.type for e in events]
+
+        assert "tool_exec_start" in types
+        assert "tool_exec_end" in types
+        assert len(agent.messages) == 4

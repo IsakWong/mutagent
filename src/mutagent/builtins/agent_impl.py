@@ -58,7 +58,13 @@ def run(
                 logger.info("LLM stop_reason=%s, tool_calls=%d",
                             response.stop_reason, len(response.message.tool_calls))
 
-                if response.stop_reason == "tool_use" and response.message.tool_calls:
+                if response.message.tool_calls:
+                    if response.stop_reason != "tool_use":
+                        logger.warning(
+                            "stop_reason=%s but %d tool_calls found in response, "
+                            "executing tools anyway",
+                            response.stop_reason, len(response.message.tool_calls),
+                        )
                     # Handle tool calls, yielding execution events
                     results = []
                     capture = _get_tool_capture_enabled(self)
