@@ -34,6 +34,9 @@ def run(
             logger.info("User message received (%d chars)", len(input_event.text))
             self.messages.append(Message(role="user", content=input_event.text))
 
+            max_rounds = getattr(self, 'max_tool_rounds', 25) or 25
+            tool_round = 0
+
             while True:
                 response = None
                 got_error = False
@@ -61,6 +64,26 @@ def run(
                             response.stop_reason, len(response.message.tool_calls))
 
                 if response.message.tool_calls:
+                    # Check tool round limit
+                    if tool_round >= max_rounds:
+                        logger.warning(
+                            "Tool call limit reached (%d rounds). "
+                            "Injecting summary request.", max_rounds,
+                        )
+                        self.messages.append(Message(
+                            role="user",
+                            content="[System] Tool call limit reached. "
+                                    "Summarize your progress and what remains to be done.",
+                        ))
+                        # Final LLM call to get summary
+                        for event in self.step(stream=stream):
+                            yield event
+                            if event.type == "response_done" and event.response:
+                                self.messages.append(event.response.message)
+                        break
+
+                    tool_round += 1
+
                     if response.stop_reason != "tool_use":
                         logger.warning(
                             "stop_reason=%s but %d tool_calls found in response, "

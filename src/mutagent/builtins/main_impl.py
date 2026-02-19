@@ -80,6 +80,19 @@ then define_module + save_module. Do NOT redefine mutagent.agent or mutagent.bui
 - Create entirely new tool classes: define a new mutagent.Declaration subclass with method stubs, then provide @impl
 - Extend ToolSet: add new tools to the Agent's tool set
 
+## Task Discipline
+- Complete the CORE task first. Do NOT create additional versions, documentation modules, \
+demos, guides, or summaries unless explicitly requested.
+- After completing the core implementation, STOP and report results to the user. \
+Let the user decide if further work is needed.
+- define_module is for CODE only. Do NOT use it to create documentation, READMEs, \
+guides, or text content. If the user needs documentation, describe it in your response text.
+- Keep module names lowercase_with_underscores. Do NOT use ALL_CAPS module names.
+- Before calling define_module, carefully review your source code for:
+  - Indentation errors (Python is whitespace-sensitive)
+  - Full-width characters in code (use ASCII punctuation only)
+  - Import errors (verify the library is available)
+
 ## Guidelines
 - When redefining declarations, remember DeclarationMeta preserves class identity.
 - When redefining implementations, the old @impl is automatically unregistered.

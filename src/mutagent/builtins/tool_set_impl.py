@@ -1,11 +1,11 @@
 """mutagent.builtins.tool_set -- ToolSet implementation."""
 
-import inspect
 import logging
 from typing import Any
 
 import mutagent
 from mutagent.messages import ToolCall, ToolResult, ToolSchema
+from mutagent.schema import get_declaration_method, make_schema
 from mutagent.tool_set import ToolEntry, ToolSet
 
 logger = logging.getLogger(__name__)
@@ -20,77 +20,6 @@ def _get_entries(self: ToolSet) -> dict[str, ToolEntry]:
     return entries
 
 
-def _make_schema_from_function(func, name: str | None = None) -> ToolSchema:
-    """Generate a ToolSchema from a standalone function using inspect."""
-    import ast
-    import textwrap
-
-    func_name = name or getattr(func, '__name__', 'unknown')
-
-    # Try AST parsing first for accurate signatures
-    try:
-        source = inspect.getsource(func)
-        source = textwrap.dedent(source)
-        tree = ast.parse(source)
-        node = tree.body[0]
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            from mutagent.builtins.selector_impl import _extract_from_funcdef, _python_type_to_json_type
-            docstring, params = _extract_from_funcdef(node)
-            description = docstring.split("\n")[0].strip() if docstring else func_name
-
-            properties: dict[str, Any] = {}
-            required: list[str] = []
-
-            for param in params:
-                prop: dict[str, Any] = {
-                    "type": _python_type_to_json_type(param["type"]),
-                    "description": param["name"],
-                }
-                if not param.get("required", True):
-                    prop["default"] = param.get("default")
-                else:
-                    required.append(param["name"])
-                properties[param["name"]] = prop
-
-            input_schema: dict[str, Any] = {
-                "type": "object",
-                "properties": properties,
-            }
-            if required:
-                input_schema["required"] = required
-
-            return ToolSchema(
-                name=func_name,
-                description=description,
-                input_schema=input_schema,
-            )
-    except (OSError, TypeError):
-        pass
-
-    # Fallback: use inspect.signature
-    sig = inspect.signature(func)
-    doc = inspect.getdoc(func) or func_name
-    description = doc.split("\n")[0].strip()
-
-    properties = {}
-    required = []
-    for pname, param in sig.parameters.items():
-        if pname == "self":
-            continue
-        prop = {"type": "string", "description": pname}
-        if param.default is inspect.Parameter.empty:
-            required.append(pname)
-        else:
-            prop["default"] = param.default
-        properties[pname] = prop
-
-    input_schema = {"type": "object", "properties": properties}
-    if required:
-        input_schema["required"] = required
-
-    return ToolSchema(name=func_name, description=description, input_schema=input_schema)
-
-
 @mutagent.impl(ToolSet.add)
 def add(self: ToolSet, source: Any, methods: list[str] | None = None) -> None:
     """Add tools from a source object or callable."""
@@ -99,7 +28,7 @@ def add(self: ToolSet, source: Any, methods: list[str] | None = None) -> None:
     if callable(source) and not isinstance(source, type) and methods is None:
         # Single callable (function or lambda)
         name = getattr(source, '__name__', 'unknown')
-        schema = _make_schema_from_function(source, name)
+        schema = make_schema(source, name)
         entries[name] = ToolEntry(
             name=name, callable=source, schema=schema, source=source,
         )
@@ -118,14 +47,14 @@ def add(self: ToolSet, source: Any, methods: list[str] | None = None) -> None:
             if not name.startswith("_") and callable(val)
         ]
 
-    from mutagent.builtins.selector_impl import make_schema_from_method
-
     for method_name in method_names:
         if method_name not in cls_dict:
             logger.warning("Method %s not found in %s.__dict__, skipping", method_name, cls.__name__)
             continue
         bound_method = getattr(source, method_name)
-        schema = make_schema_from_method(source, method_name)
+        # Use declaration method for schema (preserves original signature/docstring)
+        decl_method = get_declaration_method(cls, method_name)
+        schema = make_schema(decl_method, method_name)
         entries[method_name] = ToolEntry(
             name=method_name,
             callable=bound_method,

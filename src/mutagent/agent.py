@@ -24,12 +24,16 @@ class Agent(mutagent.Declaration):
         tool_set: The tool set for tool management and dispatch.
         system_prompt: System prompt for the LLM.
         messages: Conversation history.
+        max_tool_rounds: Maximum number of tool call rounds per user
+            message before forcing the agent to stop and summarize.
+            Default 25.
     """
 
     client: LLMClient
     tool_set: ToolSet
     system_prompt: str
     messages: list
+    max_tool_rounds: int
 
     def run(
         self, input_stream: Iterator[InputEvent], stream: bool = True
