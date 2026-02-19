@@ -9,19 +9,24 @@ from mutagent.config import Config
 
 if TYPE_CHECKING:
     from mutagent.agent import Agent
-    from mutagent.messages import StreamEvent
+    from mutagent.userio import UserIO
 
 
 class App(mutagent.Declaration):
     """App entry point.  Override via ``@impl`` for custom UI (e.g. TUI).
 
+    Interaction with the user (input collection, output rendering) is
+    delegated to the ``userio`` attribute, a :class:`UserIO` instance.
+
     Attributes:
         config: The loaded Config object.
         agent: The Agent for this session, set by ``setup_agent()``.
+        userio: The UserIO instance handling user interaction.
     """
 
     config: Config
     agent: Agent
+    userio: UserIO
 
     def load_config(self, config_path):
         """Load configuration from the given path and store in ``self.config``.
@@ -38,6 +43,7 @@ class App(mutagent.Declaration):
     def setup_agent(self, system_prompt: str = "") -> Agent:
         """Initialise the session Agent and store it in ``self.agent``.
 
+        Also creates the UserIO instance and stores it in ``self.userio``.
         Override to customise component assembly (different tools,
         different LLMClient, etc.).
 
@@ -48,32 +54,6 @@ class App(mutagent.Declaration):
             The created Agent instance (also stored as ``self.agent``).
         """
         return main_impl.setup_agent(self, system_prompt=system_prompt)
-
-    def input_stream(self):
-        """Generator that reads user input from stdin."""
-        return main_impl.input_stream(self)
-
-    def handle_stream_event(self, event: StreamEvent):
-        """Handle an output event from the agent.
-
-        Override to control how events are displayed to the user (e.g. TUI,
-        Web, etc.).  The default implementation prints to console.
-
-        Args:
-            event: The event emitted by the agent.
-        """
-        return main_impl.handle_stream_event(self, event)
-
-    def confirm_exit(self) -> bool:
-        """Ask user to confirm exit after an interruption.
-
-        Override to control how exit confirmation is handled (e.g. TUI dialog,
-        web prompt, etc.).  The default implementation prompts in console.
-
-        Returns:
-            True if the user confirms they want to exit, False to continue.
-        """
-        return main_impl.confirm_exit(self)
 
     def run(self) -> None:
         """Run the agent session loop.

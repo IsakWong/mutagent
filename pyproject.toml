@@ -32,6 +32,16 @@ dependencies = [
 dev = [
     "pytest>=7.0",
 ]
+rich = [
+    "rich>=13.0",
+]
+tui = [
+    "textual>=0.40",
+]
+web = [
+    "fastapi>=0.100",
+    "uvicorn>=0.20",
+]
 
 [project.urls]
 Homepage = "https://github.com/tiwb/mutagent"

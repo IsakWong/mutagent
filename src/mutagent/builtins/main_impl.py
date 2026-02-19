@@ -14,7 +14,6 @@ from mutagent.toolkits.agent_toolkit import AgentToolkit
 from mutagent.client import LLMClient
 from mutagent.toolkits.log_toolkit import LogToolkit
 from mutagent.main import App
-from mutagent.messages import InputEvent
 from mutagent.toolkits.module_toolkit import ModuleToolkit
 from mutagent.runtime.module_manager import ModuleManager
 from mutagent.runtime.log_store import (
@@ -22,6 +21,7 @@ from mutagent.runtime.log_store import (
 )
 from mutagent.runtime.api_recorder import ApiRecorder
 from mutagent.tools import ToolSet
+from mutagent.userio import UserIO
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +166,11 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
 
     model = self.config.get_model()
 
+    # --- UserIO setup ---
+    import mutagent.builtins.block_handlers  # noqa: F401  -- register BlockHandler subclasses
+    from mutagent.builtins.userio_impl import discover_block_handlers
+    self.userio = UserIO(block_handlers=discover_block_handlers())
+
     # --- Logging setup ---
     session_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_dir = Path(self.config.get("logging.log_dir", ".mutagent/logs"))
@@ -301,33 +306,6 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
     return self.agent
 
 
-@mutagent.impl(App.handle_stream_event)
-def handle_stream_event(self, event):
-    """Default event handler that prints to console."""
-    if event.type == "text_delta":
-        print(event.text, end="", flush=True)
-    elif event.type == "tool_exec_start":
-        name = event.tool_call.name if event.tool_call else "?"
-        args_summary = _summarize_args(
-            event.tool_call.arguments if event.tool_call else {}
-        )
-        if args_summary:
-            print(f"\n  [{name}({args_summary})]", flush=True)
-        else:
-            print(f"\n  [{name}]", flush=True)
-    elif event.type == "tool_exec_end":
-        if event.tool_result:
-            status = "error" if event.tool_result.is_error else "done"
-            summary = event.tool_result.content[:100]
-            if len(event.tool_result.content) > 100:
-                summary += "..."
-            print(f"  -> [{status}] {summary}", flush=True)
-    elif event.type == "error":
-        print(f"\n[Error: {event.error}]", file=sys.stderr, flush=True)
-    elif event.type == "turn_done":
-        print()
-
-
 @mutagent.impl(App.run)
 def run(self) -> None:
     self.setup_agent(system_prompt=SYSTEM_PROMPT)
@@ -337,58 +315,11 @@ def run(self) -> None:
 
     while True:
         try:
-            for event in self.agent.run(self.input_stream()):
-                self.handle_stream_event(event)
+            for event in self.agent.run(self.userio.input_stream()):
+                self.userio.render_event(event)
             # End session
             break
         except KeyboardInterrupt:
             print("\n[User interrupted]")
         except Exception as e:
             print(f"\n[Error: {e}]", file=sys.stderr, flush=True)
-
-
-@mutagent.impl(App.input_stream)
-def input_stream(self):
-    """Generator that reads user input from stdin."""
-    while True:
-        try:
-            while True:
-               user_input = input("> ").strip()
-               if user_input:
-                    break
-            yield InputEvent(type="user_message", text=user_input)
-        except KeyboardInterrupt:
-            if self.confirm_exit():
-                print("Bye.")
-                return
-        except EOFError:
-            return
-
-
-def _summarize_args(args: dict) -> str:
-    """Create a short summary of tool call arguments."""
-    if not args:
-        return ""
-    parts = []
-    for key, value in args.items():
-        s = str(value)
-        if len(s) > 40:
-            s = s[:37] + "..."
-        parts.append(f"{key}={s}")
-    return ", ".join(parts)
-
-
-@mutagent.impl(App.confirm_exit)
-def confirm_exit(self) -> bool:
-    """Ask user to confirm exit after an interruption."""
-    for _ in range(3):  # allow up to 3 attempts to confirm
-        try:
-            choice = input("\nDo you want to exit? (Y/n) ").strip().lower()
-        except KeyboardInterrupt:
-            continue
-        if choice in ("y", "yes", ""):
-            return True
-        elif choice in ("n", "no"):
-            return False
-    print("")
-    return True

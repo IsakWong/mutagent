@@ -126,3 +126,28 @@ class StreamEvent:
     tool_result: Optional[ToolResult] = None
     response: Optional[Response] = None
     error: str = ""
+
+
+@dataclass
+class Content:
+    """A structured content block for UserIO rendering.
+
+    Content serves as the unified data model for present() and block parsing.
+    It can originate from:
+    1. render_event parsing: mutagent:xxx blocks detected in LLM text stream.
+    2. present() direct creation: system components or tools construct Content.
+    3. Sub-Agent output: Sub-Agent StreamEvents converted to Content.
+
+    Attributes:
+        type: Block type (tasks, status, code, ask, confirm, agents, thinking, etc.).
+        body: Content body (raw text inside the block).
+        target: Target rendering area (empty string = main panel).
+        source: Source identifier (Agent name, system component name, etc.).
+        metadata: Additional attributes (e.g. code block's lang, file, etc.).
+    """
+
+    type: str
+    body: str = ""
+    target: str = ""
+    source: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
