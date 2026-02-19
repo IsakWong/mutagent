@@ -3,13 +3,13 @@
 import logging
 
 import mutagent
-from mutagent.essential_tools import EssentialTools
+from mutagent.toolkits.module_toolkit import ModuleToolkit
 
 logger = logging.getLogger(__name__)
 
 
-@mutagent.impl(EssentialTools.define_module)
-def define_module(self: EssentialTools, module_path: str, source: str) -> str:
+@mutagent.impl(ModuleToolkit.define_module)
+def define_module(self: ModuleToolkit, module_path: str, source: str) -> str:
     """Define or redefine a Python module in memory."""
     warning = ""
     if module_path.startswith("mutagent."):

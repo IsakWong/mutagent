@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from mutagent.essential_tools import EssentialTools
+from mutagent.toolkits.module_toolkit import ModuleToolkit
 from mutagent.runtime.module_manager import ModuleManager
 
 import mutagent.builtins  # noqa: F401  -- register all @impl
@@ -14,7 +14,7 @@ import mutagent.builtins  # noqa: F401  -- register all @impl
 @pytest.fixture
 def tools():
     mgr = ModuleManager()
-    t = EssentialTools(module_manager=mgr)
+    t = ModuleToolkit(module_manager=mgr)
     yield t
     mgr.cleanup()
 
@@ -34,8 +34,8 @@ class TestInspectModule:
         assert "not found" in result.lower()
 
     def test_inspect_shows_classes(self, tools):
-        result = tools.inspect_module("mutagent.essential_tools", depth=2)
-        assert "EssentialTools" in result
+        result = tools.inspect_module("mutagent.toolkits.module_toolkit", depth=2)
+        assert "ModuleToolkit" in result
 
     def test_inspect_depth_limits_output(self, tools):
         result1 = tools.inspect_module("mutagent", depth=1)
@@ -51,8 +51,8 @@ class TestViewSource:
         assert "class Message" in result or "class ToolCall" in result
 
     def test_view_class_source(self, tools):
-        result = tools.view_source("mutagent.essential_tools.EssentialTools")
-        assert "class EssentialTools" in result
+        result = tools.view_source("mutagent.toolkits.module_toolkit.ModuleToolkit")
+        assert "class ModuleToolkit" in result
 
     def test_view_patched_module(self, tools):
         tools.module_manager.patch_module(

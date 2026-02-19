@@ -1,16 +1,16 @@
-"""mutagent.builtins.delegate -- DelegateTool implementation."""
+"""mutagent.builtins.delegate -- AgentToolkit.delegate implementation."""
 
 import logging
 
 import mutagent
-from mutagent.delegate import DelegateTool
+from mutagent.toolkits.agent_toolkit import AgentToolkit
 from mutagent.messages import InputEvent, StreamEvent
 
 logger = logging.getLogger(__name__)
 
 
-@mutagent.impl(DelegateTool.delegate)
-def delegate(self: DelegateTool, agent_name: str, task: str) -> str:
+@mutagent.impl(AgentToolkit.delegate)
+def delegate(self: AgentToolkit, agent_name: str, task: str) -> str:
     """Delegate a task to a named Sub-Agent (synchronous blocking)."""
     agent = self.agents.get(agent_name)
     if agent is None:

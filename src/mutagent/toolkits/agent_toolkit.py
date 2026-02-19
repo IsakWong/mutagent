@@ -1,17 +1,17 @@
-"""mutagent.delegate -- DelegateTool declaration."""
+"""mutagent.agent_toolkit -- AgentToolkit declaration."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import mutagent
+from mutagent.tools import Toolkit
 
 if TYPE_CHECKING:
     from mutagent.agent import Agent
 
 
-class DelegateTool(mutagent.Declaration):
-    """Delegate tool for multi-agent collaboration.
+class AgentToolkit(Toolkit):
+    """Tools for multi-agent delegation.
 
     Holds a set of pre-created Sub-Agent instances. The ``delegate``
     method dispatches a task to a named Sub-Agent, which runs to
@@ -39,5 +39,6 @@ class DelegateTool(mutagent.Declaration):
         return delegate_impl.delegate(self, agent_name, task)
 
 
-from .builtins import delegate_impl
+from mutagent.builtins import delegate_impl
+import mutagent
 mutagent.register_module_impls(delegate_impl)

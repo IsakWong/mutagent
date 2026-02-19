@@ -7,7 +7,8 @@ import pytest
 import mutagent
 from mutagent.agent import Agent
 from mutagent.client import LLMClient
-from mutagent.essential_tools import EssentialTools
+from mutagent.toolkits.module_toolkit import ModuleToolkit
+from mutagent.toolkits.log_toolkit import LogToolkit
 from mutagent.messages import (
     InputEvent,
     Message,
@@ -18,7 +19,7 @@ from mutagent.messages import (
     ToolSchema,
 )
 from mutagent.runtime.module_manager import ModuleManager
-from mutagent.tool_set import ToolSet
+from mutagent.tools import ToolSet
 from mutobj.core import DeclarationMeta, _DECLARED_METHODS
 
 import mutagent.builtins  # noqa: F401  -- register all @impl
@@ -74,9 +75,9 @@ def _make_agent(mock_client=None):
             base_url="https://api.test.com",
         )
     mgr = ModuleManager()
-    tools = EssentialTools(module_manager=mgr)
+    module_tools = ModuleToolkit(module_manager=mgr)
     tool_set = ToolSet()
-    tool_set.add(tools)
+    tool_set.add(module_tools)
     agent = Agent(
         client=mock_client,
         tool_set=tool_set,

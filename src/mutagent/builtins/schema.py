@@ -1,4 +1,4 @@
-"""mutagent.schema -- Tool schema generation from signatures and docstrings."""
+"""mutagent.builtins.schema -- Tool schema generation from signatures and docstrings."""
 
 from __future__ import annotations
 
@@ -127,10 +127,12 @@ def get_declaration_method(cls: type, method_name: str):
     """
     try:
         from mutobj.core import _impl_chain
-        chain = _impl_chain.get((cls, method_name), [])
-        for func, source_module, seq in chain:
-            if source_module == "__default__":
-                return func
+        # Traverse MRO: the @impl may target a parent class
+        for klass in cls.__mro__:
+            chain = _impl_chain.get((klass, method_name), [])
+            for func, source_module, seq in chain:
+                if source_module == "__default__":
+                    return func
     except ImportError:
         pass
     return getattr(cls, method_name)

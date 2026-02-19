@@ -12,11 +12,11 @@ import mutagent.builtins  # noqa: F401  -- register all @impl
 from mutagent.agent import Agent
 from mutagent.client import LLMClient
 from mutagent.config import Config
-from mutagent.essential_tools import EssentialTools
+from mutagent.toolkits.module_toolkit import ModuleToolkit
 from mutagent.main import App
 from mutagent.messages import InputEvent, Message, Response, StreamEvent, ToolCall, ToolResult, ToolSchema
 from mutagent.runtime.module_manager import ModuleManager
-from mutagent.tool_set import ToolSet
+from mutagent.tools import ToolSet
 
 
 def _create_test_agent(
@@ -276,7 +276,7 @@ class TestSelfEvolution:
         # Cleanup: unregister override impls, remove virtual modules,
         # then re-load the original tool_set impl to restore original impls.
         entries = getattr(agent.tool_set, '_entries', {})
-        # Find EssentialTools source to get module_manager
+        # Find ModuleToolkit source to get module_manager
         for entry in entries.values():
             mgr = getattr(entry.source, "module_manager", None)
             if mgr is not None:
@@ -366,9 +366,9 @@ class TestSelfEvolution:
                         "module_path": "user_tools.tool_set_ext",
                         "source": (
                             "import mutagent\n"
-                            "from mutagent.tool_set import ToolSet\n"
+                            "from mutagent.tools import ToolSet\n"
                             "from mutagent.messages import ToolResult\n"
-                            "from mutagent.builtins.selector_impl import make_schema_from_method\n"
+                            "from mutagent.builtins.schema import make_schema\n"
                             "\n"
                             "@mutagent.impl(ToolSet.get_tools)\n"
                             "def get_tools(self):\n"
@@ -376,7 +376,7 @@ class TestSelfEvolution:
                             "    schemas = [entry.schema for entry in entries.values()]\n"
                             "    from user_tools.math_tools import MathTools\n"
                             "    mt = MathTools()\n"
-                            "    schemas.append(make_schema_from_method(mt, 'factorial'))\n"
+                            "    schemas.append(make_schema(getattr(mt, 'factorial')))\n"
                             "    return schemas\n"
                             "\n"
                             "@mutagent.impl(ToolSet.dispatch)\n"

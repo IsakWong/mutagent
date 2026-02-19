@@ -34,9 +34,9 @@ define_module(Toolkit 子类) → 自动发现 → 调用工具测试 → 修改
 
 | 文档 | 关系 |
 |------|------|
-| feature-tool-loop-control.md | Phase 1a，设计已确认，待实施后删除 |
-| feature-tool-schema-annotation.md | Phase 1b，设计已确认，待实施后删除 |
-| feature-dynamic-tool-registration.md | 被本文档替代，待删除 |
+| feature-tool-loop-control.md | Phase 1a，已实施并删除 |
+| feature-tool-schema-annotation.md | Phase 1b，已实施并删除 |
+| feature-dynamic-tool-registration.md | 被本文档替代，已删除 |
 | feature-multi-agent.md | 前置依赖（ToolSet/DelegateTool 已完成） |
 | feature-agent-evolution-robustness.md | 前置依赖（已完成） |
 
@@ -494,63 +494,71 @@ Rules:
   - [x] 确保现有测试全部通过（331 passed, 2 skipped）
   - 状态：✅ 已完成
 
-### Phase 2: Toolkit 与自动发现 [待开始]
+### Phase 2: Toolkit 与自动发现 [✅ 已完成]
 
-- [ ] **Task 2.1**: 定义 Toolkit 基类
-  - [ ] 创建 `src/mutagent/toolkit.py`
-  - [ ] 在 `mutagent/__init__.py` 中导出 `Toolkit`
-  - 状态：⏸️ 待开始
+- [x] **Task 2.1**: 定义 Toolkit 基类
+  - [x] 创建 `src/mutagent/toolkit.py`
+  - [x] 在 `mutagent/__init__.py` 中导出 `Toolkit`
+  - 状态：✅ 已完成
 
-- [ ] **Task 2.2**: 工具分类重组
-  - [ ] 创建 `module_toolkit.py` — ModuleToolkit 声明（inspect_module, view_source, define_module, save_module）
-  - [ ] 创建 `log_toolkit.py` — LogToolkit 声明（query_logs）
-  - [ ] 重命名 `delegate.py` → `agent_toolkit.py` — AgentToolkit 声明（delegate）
-  - [ ] 更新各 `_impl.py` 的 `@impl` 目标（如 `@impl(ModuleToolkit.define_module)`）
-  - [ ] 删除 `essential_tools.py` 和 `delegate.py`
-  - [ ] 更新 `builtins/__init__.py` 导入
-  - [ ] 确保现有测试通过（回归）
-  - 状态：⏸️ 待开始
+- [x] **Task 2.2**: 工具分类重组
+  - [x] 创建 `module_toolkit.py` — ModuleToolkit 声明（inspect_module, view_source, define_module, save_module）
+  - [x] 创建 `log_toolkit.py` — LogToolkit 声明（query_logs）
+  - [x] 创建 `agent_toolkit.py` — AgentToolkit 声明（delegate）
+  - [x] 更新各 `_impl.py` 的 `@impl` 目标（如 `@impl(ModuleToolkit.define_module)`）
+  - [x] `essential_tools.py` 保留为向后兼容 wrapper（EssentialTools 继承 ModuleToolkit）
+  - [x] `delegate.py` 保留为向后兼容 re-export（DelegateTool = AgentToolkit）
+  - [x] 更新 `main_impl.py` 初始化代码使用新 Toolkit 类
+  - [x] 更新 `schema.py` 和 `selector_impl.py` 的 MRO 遍历
+  - [x] 更新测试文件（test_agent, test_e2e, test_essential_tools, test_logging, test_tool_set, test_selector, test_schema）
+  - [x] 确保现有测试通过（331 passed, 2 skipped）
+  - 状态：✅ 已完成
 
-- [ ] **Task 2.3**: ToolSet 自动发现实现
-  - [ ] `auto_discover` 声明属性（默认 False）
-  - [ ] `_toolkit_instances` 实例缓存
-  - [ ] `_added_classes` 手动添加类集合
-  - [ ] `_discover_toolkit_classes()` 扫描 `_class_registry`
-  - [ ] `_refresh_toolkit_entries()` 刷新逻辑（含版本检查）
-  - [ ] `get_tools()` 调用前触发刷新
-  - [ ] `dispatch()` 查找所有工具（静态 + 自动发现）
-  - 状态：⏸️ 待开始
+- [x] **Task 2.3**: ToolSet 自动发现实现
+  - [x] `auto_discover` 声明属性（默认 False）
+  - [x] `_toolkit_instances` 实例缓存（`_discovered` dict）
+  - [x] `_added_classes` 手动添加类集合
+  - [x] `_discover_toolkit_classes()` 扫描 `_class_registry`
+  - [x] `_refresh_toolkit_entries()` 刷新逻辑（含版本检查）
+  - [x] `get_tools()` / `dispatch()` / `query()` 调用前触发刷新
+  - [x] 名称冲突处理：预注册工具优先
+  - [x] 测试用例（8 个自动发现测试通过）
+  - 状态：✅ 已完成
 
-- [ ] **Task 2.4**: 延迟绑定
-  - [ ] `_make_late_bound(instance, method_name)` 包装器
-  - [ ] 自动发现的工具使用延迟绑定
-  - 状态：⏸️ 待开始
+- [x] **Task 2.4**: 延迟绑定
+  - [x] `_make_late_bound(instance, method_name)` 包装器
+  - [x] 自动发现的工具使用延迟绑定
+  - [x] 测试用例（4 个延迟绑定测试通过）
+  - 状态：✅ 已完成
 
-- [ ] **Task 2.5**: main_impl.py 集成
-  - [ ] 初始化代码迁移：ModuleToolkit + LogToolkit + AgentToolkit
-  - [ ] System Agent 的 ToolSet 设置 `auto_discover = True`
-  - [ ] Sub-Agent 的 ToolSet 保持 `auto_discover = False`
-  - [ ] 更新 SYSTEM_PROMPT
-  - 状态：⏸️ 待开始
+- [x] **Task 2.5**: main_impl.py 集成
+  - [x] System Agent 的 ToolSet 设置 `auto_discover = True`
+  - [x] Sub-Agent 的 ToolSet 保持 `auto_discover = False`（默认）
+  - [x] 更新 SYSTEM_PROMPT：新增 Tool Development 部分
+  - [x] 更新 Key Concepts：添加 Toolkit 说明
+  - [x] 更新 Self-Evolution：引导创建 Toolkit 子类
+  - 状态：✅ 已完成
 
-- [ ] **Task 2.6**: 测试用例
-  - [ ] Toolkit 子类的公开方法自动发现为工具
-  - [ ] 以 `_` 开头的方法不被发现
-  - [ ] 预注册工具不被自动发现重复注册
-  - [ ] 无参数构造的 Toolkit 子类自动实例化
-  - [ ] 需要参数的 Toolkit 子类自动发现时跳过
-  - [ ] 延迟绑定：define_module 后调用反映新代码
-  - [ ] define_module 增删方法后刷新正确
-  - [ ] 名称冲突：自动发现的工具不覆盖预注册工具
-  - [ ] auto_discover=False 时不进行自动发现
-  - [ ] 完整迭代流程：define → auto-discover → call → redefine → call → save
-  - 状态：⏸️ 待开始
+- [x] **Task 2.6**: 测试用例
+  - [x] Toolkit 子类的公开方法自动发现为工具
+  - [x] 以 `_` 开头的方法不被发现
+  - [x] 预注册工具不被自动发现重复注册
+  - [x] 无参数构造的 Toolkit 子类自动实例化
+  - [x] 需要参数的 Toolkit 子类自动发现时跳过
+  - [x] 延迟绑定：define_module 后调用反映新代码
+  - [x] define_module 增删方法后刷新正确
+  - [x] 名称冲突：自动发现的工具不覆盖预注册工具
+  - [x] auto_discover=False 时不进行自动发现
+  - [x] 完整迭代流程：define → auto-discover → call → redefine → call
+  - [x] 多 Toolkit 同时发现
+  - [x] 确保全部测试通过（343 passed, 2 skipped）
+  - 状态：✅ 已完成
 
-- [ ] **Task 2.7**: 清理旧文档
-  - [ ] 删除 `feature-dynamic-tool-registration.md`
-  - [ ] 删除 `feature-tool-loop-control.md`（内容已合并）
-  - [ ] 删除 `feature-tool-schema-annotation.md`（内容已合并）
-  - 状态：⏸️ 待开始
+- [x] **Task 2.7**: 清理旧文档
+  - [x] 删除 `feature-dynamic-tool-registration.md`
+  - [x] 删除 `feature-tool-loop-control.md`（内容已合并）
+  - [x] 删除 `feature-tool-schema-annotation.md`（内容已合并）
+  - 状态：✅ 已完成
 
 ### Phase 3: 持久化 [待开始]
 

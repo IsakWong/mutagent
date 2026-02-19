@@ -1,11 +1,11 @@
-"""Tests for mutagent.schema -- parse_docstring, make_schema, get_declaration_method."""
+"""Tests for mutagent.builtins.schema -- parse_docstring, make_schema, get_declaration_method."""
 
 import inspect
 
 import pytest
 
 import mutagent
-from mutagent.schema import get_declaration_method, make_schema, parse_docstring
+from mutagent.builtins.schema import get_declaration_method, make_schema, parse_docstring
 from mutagent.messages import ToolSchema
 
 import mutagent.builtins  # noqa: F401  -- register all @impl
@@ -211,9 +211,9 @@ class TestGetDeclarationMethod:
 
     def test_declaration_with_impl(self):
         """get_declaration_method returns the original stub, not the @impl replacement."""
-        from mutagent.essential_tools import EssentialTools
+        from mutagent.toolkits.module_toolkit import ModuleToolkit
 
-        decl = get_declaration_method(EssentialTools, "define_module")
+        decl = get_declaration_method(ModuleToolkit, "define_module")
         # The declaration method should have the original docstring
         assert decl.__doc__ is not None
         assert "Define or redefine" in decl.__doc__
@@ -230,9 +230,9 @@ class TestGetDeclarationMethod:
 
     def test_returns_original_signature(self):
         """Declaration method preserves original parameter annotations."""
-        from mutagent.essential_tools import EssentialTools
+        from mutagent.toolkits.module_toolkit import ModuleToolkit
 
-        decl = get_declaration_method(EssentialTools, "inspect_module")
+        decl = get_declaration_method(ModuleToolkit, "inspect_module")
         sig = inspect.signature(decl)
         params = list(sig.parameters.keys())
         assert "self" in params
@@ -241,14 +241,14 @@ class TestGetDeclarationMethod:
 
 
 # ---------------------------------------------------------------------------
-# Integration: make_schema with get_declaration_method (EssentialTools)
+# Integration: make_schema with get_declaration_method
 # ---------------------------------------------------------------------------
 
-class TestSchemaForEssentialTools:
+class TestSchemaForToolkits:
 
     def test_inspect_module_schema(self):
-        from mutagent.essential_tools import EssentialTools
-        decl = get_declaration_method(EssentialTools, "inspect_module")
+        from mutagent.toolkits.module_toolkit import ModuleToolkit
+        decl = get_declaration_method(ModuleToolkit, "inspect_module")
         schema = make_schema(decl, "inspect_module")
 
         assert schema.name == "inspect_module"
@@ -262,8 +262,8 @@ class TestSchemaForEssentialTools:
         assert "required" not in schema.input_schema
 
     def test_define_module_schema(self):
-        from mutagent.essential_tools import EssentialTools
-        decl = get_declaration_method(EssentialTools, "define_module")
+        from mutagent.toolkits.module_toolkit import ModuleToolkit
+        decl = get_declaration_method(ModuleToolkit, "define_module")
         schema = make_schema(decl, "define_module")
 
         assert schema.name == "define_module"
@@ -273,8 +273,8 @@ class TestSchemaForEssentialTools:
         assert schema.input_schema["required"] == ["module_path", "source"]
 
     def test_query_logs_schema(self):
-        from mutagent.essential_tools import EssentialTools
-        decl = get_declaration_method(EssentialTools, "query_logs")
+        from mutagent.toolkits.log_toolkit import LogToolkit
+        decl = get_declaration_method(LogToolkit, "query_logs")
         schema = make_schema(decl, "query_logs")
 
         assert schema.name == "query_logs"
@@ -287,11 +287,11 @@ class TestSchemaForEssentialTools:
         # All have defaults, no required params
         assert "required" not in schema.input_schema
 
-    def test_all_essential_tools_have_rich_descriptions(self):
-        """All EssentialTools methods should have param descriptions from docstrings."""
-        from mutagent.essential_tools import EssentialTools
-        for method_name in ["inspect_module", "view_source", "define_module", "save_module", "query_logs"]:
-            decl = get_declaration_method(EssentialTools, method_name)
+    def test_module_toolkit_methods_have_rich_descriptions(self):
+        """All ModuleToolkit methods should have param descriptions from docstrings."""
+        from mutagent.toolkits.module_toolkit import ModuleToolkit
+        for method_name in ["inspect_module", "view_source", "define_module", "save_module"]:
+            decl = get_declaration_method(ModuleToolkit, method_name)
             schema = make_schema(decl, method_name)
             for pname, prop in schema.input_schema["properties"].items():
                 # Description should be more than just the parameter name
@@ -300,8 +300,8 @@ class TestSchemaForEssentialTools:
                 )
 
     def test_delegate_schema(self):
-        from mutagent.delegate import DelegateTool
-        decl = get_declaration_method(DelegateTool, "delegate")
+        from mutagent.toolkits.agent_toolkit import AgentToolkit
+        decl = get_declaration_method(AgentToolkit, "delegate")
         schema = make_schema(decl, "delegate")
 
         assert schema.name == "delegate"

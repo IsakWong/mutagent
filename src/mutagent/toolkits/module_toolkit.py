@@ -1,30 +1,23 @@
-"""mutagent.essential_tools -- Essential tool primitives for Agent self-evolution."""
+"""mutagent.module_toolkit -- ModuleToolkit declaration."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import mutagent
+from mutagent.tools import Toolkit
 
 if TYPE_CHECKING:
     from mutagent.runtime.module_manager import ModuleManager
-    from mutagent.runtime.log_store import LogStore
 
 
-class EssentialTools(mutagent.Declaration):
-    """Essential tool primitives -- the minimal operation set for Agent evolution.
-
-    Each method is an independent tool declaration. An Agent can override
-    any tool's implementation via ``@impl(EssentialTools.<method>)``,
-    or patch this class to add/remove tool methods.
+class ModuleToolkit(Toolkit):
+    """Tools for inspecting, modifying, and persisting Python modules.
 
     Attributes:
-        module_manager: The ModuleManager instance used for runtime patching.
-        log_store: The LogStore instance for in-memory log storage.
+        module_manager: The ModuleManager instance for runtime patching.
     """
 
     module_manager: ModuleManager
-    log_store: LogStore
 
     def inspect_module(self, module_path: str = "", depth: int = 2) -> str:
         """Inspect the structure of a Python module.
@@ -81,33 +74,11 @@ class EssentialTools(mutagent.Declaration):
         """
         return save_module_impl.save_module(self, module_path, level)
 
-    def query_logs(
-        self,
-        pattern: str = "",
-        level: str = "DEBUG",
-        limit: int = 50,
-        tool_capture: str = "",
-    ) -> str:
-        """Query log entries or configure logging.
-
-        Args:
-            pattern: Regex pattern to search in log messages. Empty matches all.
-            level: Minimum log level filter (DEBUG/INFO/WARNING/ERROR).
-            limit: Maximum number of entries to return.
-            tool_capture: Set to "on" or "off" to enable/disable tool log
-                capture (logs appended to tool output). Empty string = no change.
-
-        Returns:
-            Formatted log entries, newest first.
-        """
-        return query_logs_impl.query_logs(self, pattern, level, limit, tool_capture)
-
 
 from mutagent.builtins import (
     inspect_module_impl, view_source_impl, define_module_impl, save_module_impl,
-    query_logs_impl,
 )
+import mutagent
 mutagent.register_module_impls(
     inspect_module_impl, view_source_impl, define_module_impl, save_module_impl,
-    query_logs_impl,
 )

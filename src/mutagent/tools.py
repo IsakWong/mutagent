@@ -1,4 +1,4 @@
-"""mutagent.tool_set -- ToolSet declaration."""
+"""mutagent.tools -- Toolkit base class and ToolSet declaration."""
 
 from __future__ import annotations
 
@@ -36,7 +36,18 @@ class ToolSet(mutagent.Declaration):
 
     Tools can be registered from object instances (registering their
     public methods) or from individual callables.
+
+    When ``auto_discover`` is True, ToolSet automatically scans mutobj's
+    class registry for Toolkit subclasses and registers their public
+    methods as tools. This enables the tool evolution workflow: Agent
+    creates a Toolkit subclass via define_module, and its methods
+    become callable tools immediately.
+
+    Attributes:
+        auto_discover: Enable automatic Toolkit subclass discovery.
     """
+
+    auto_discover: bool
 
     def add(self, source: Any, methods: list[str] | None = None) -> None:
         """Add tools from a source.
@@ -91,6 +102,31 @@ class ToolSet(mutagent.Declaration):
             The result of executing the tool.
         """
         return tool_set_impl.dispatch(self, tool_call)
+
+
+class Toolkit(mutagent.Declaration):
+    """Base class for tool providers.
+
+    All public methods (not starting with _) defined on subclasses
+    are automatically discovered as tools by ToolSet when
+    auto_discover is enabled.
+
+    Example::
+
+        class MyTools(mutagent.Toolkit):
+            def greet(self, name: str) -> str:
+                '''Say hello.
+
+                Args:
+                    name: The person to greet.
+
+                Returns:
+                    A greeting message.
+                '''
+                return f"Hello, {name}!"
+    """
+
+    pass
 
 
 from .builtins import tool_set_impl

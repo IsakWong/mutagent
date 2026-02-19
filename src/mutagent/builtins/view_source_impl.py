@@ -5,7 +5,7 @@ import inspect
 import sys
 
 import mutagent
-from mutagent.essential_tools import EssentialTools
+from mutagent.toolkits.module_toolkit import ModuleToolkit
 
 
 def _resolve_target(target: str):
@@ -45,8 +45,8 @@ def _resolve_target(target: str):
     raise ValueError(f"Cannot resolve target: {target}")
 
 
-@mutagent.impl(EssentialTools.view_source)
-def view_source(self: EssentialTools, target: str) -> str:
+@mutagent.impl(ModuleToolkit.view_source)
+def view_source(self: ModuleToolkit, target: str) -> str:
     """View the source code of a module, class, or function."""
     try:
         obj = _resolve_target(target)

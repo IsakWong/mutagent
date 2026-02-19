@@ -5,20 +5,214 @@ from typing import Any
 
 import mutagent
 from mutagent.messages import ToolCall, ToolResult, ToolSchema
-from mutagent.schema import get_declaration_method, make_schema
-from mutagent.tool_set import ToolEntry, ToolSet
+from mutagent.builtins.schema import get_declaration_method, make_schema
+from mutagent.tools import ToolEntry, ToolSet
 
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Internal state helpers
+# ---------------------------------------------------------------------------
+
 def _get_entries(self: ToolSet) -> dict[str, ToolEntry]:
-    """Get or initialize the internal entries dict."""
+    """Get or initialize the internal entries dict (manually added tools)."""
     entries = getattr(self, '_entries', None)
     if entries is None:
         entries = {}
         object.__setattr__(self, '_entries', entries)
     return entries
 
+
+def _get_added_classes(self: ToolSet) -> set[type]:
+    """Get or initialize the set of classes added via add()."""
+    added = getattr(self, '_added_classes', None)
+    if added is None:
+        added = set()
+        object.__setattr__(self, '_added_classes', added)
+    return added
+
+
+def _get_discovered(self: ToolSet) -> dict[type, dict]:
+    """Get or initialize the auto-discovered toolkit state.
+
+    Returns dict mapping toolkit class -> {
+        'instance': object,
+        'entries': dict[str, ToolEntry],
+        'version': int,     # module version at time of discovery
+        'module': str,       # module name for version tracking
+    }
+    """
+    discovered = getattr(self, '_discovered', None)
+    if discovered is None:
+        discovered = {}
+        object.__setattr__(self, '_discovered', discovered)
+    return discovered
+
+
+# ---------------------------------------------------------------------------
+# Late binding
+# ---------------------------------------------------------------------------
+
+def _make_late_bound(instance: Any, method_name: str):
+    """Create a late-bound wrapper that resolves the method at call time.
+
+    This ensures that when the class is updated via define_module, the
+    next call uses the new implementation without re-registration.
+    """
+    def wrapper(**kwargs):
+        return getattr(instance, method_name)(**kwargs)
+
+    # Copy metadata for schema generation
+    actual = getattr(instance, method_name)
+    wrapper.__name__ = method_name
+    wrapper.__doc__ = actual.__doc__
+    wrapper.__annotations__ = getattr(actual, '__annotations__', {})
+    return wrapper
+
+
+# ---------------------------------------------------------------------------
+# Auto-discovery
+# ---------------------------------------------------------------------------
+
+def _discover_toolkit_classes() -> list[type]:
+    """Scan mutobj _class_registry for all Toolkit subclasses."""
+    from mutobj.core import _class_registry
+    from mutagent.tools import Toolkit
+
+    return [
+        cls for (module_name, qualname), cls in _class_registry.items()
+        if cls is not Toolkit and issubclass(cls, Toolkit)
+    ]
+
+
+def _get_public_methods(cls: type) -> list[str]:
+    """Get public method names defined directly on the class."""
+    return [
+        name for name, val in cls.__dict__.items()
+        if not name.startswith("_") and callable(val)
+    ]
+
+
+def _get_module_name(cls: type) -> str:
+    """Get the module name for a class (for version tracking)."""
+    return getattr(cls, '__module__', '')
+
+
+def _make_entries_for_toolkit(cls: type, instance: Any) -> dict[str, ToolEntry]:
+    """Create ToolEntry dict for a Toolkit class instance (late-bound)."""
+    entries: dict[str, ToolEntry] = {}
+    for method_name in _get_public_methods(cls):
+        late_bound = _make_late_bound(instance, method_name)
+        decl_method = get_declaration_method(cls, method_name)
+        schema = make_schema(decl_method, method_name)
+        entries[method_name] = ToolEntry(
+            name=method_name,
+            callable=late_bound,
+            schema=schema,
+            source=instance,
+        )
+    return entries
+
+
+def _refresh_discovered(self: ToolSet) -> None:
+    """Refresh auto-discovered toolkit entries.
+
+    Scans the class registry for Toolkit subclasses, instantiates new ones,
+    refreshes stale ones (version changed), and removes gone ones.
+    """
+    from mutagent.runtime.module_manager import ModuleManager
+
+    added_classes = _get_added_classes(self)
+    discovered = _get_discovered(self)
+
+    # Find the module_manager for version checking (if available)
+    entries = _get_entries(self)
+    mgr: ModuleManager | None = None
+    for entry in entries.values():
+        mgr = getattr(entry.source, 'module_manager', None)
+        if mgr is not None:
+            break
+
+    current_toolkit_classes = _discover_toolkit_classes()
+    current_set = set(current_toolkit_classes)
+
+    # Remove classes that no longer exist
+    gone = [cls for cls in discovered if cls not in current_set]
+    for cls in gone:
+        logger.info("Removing auto-discovered toolkit: %s", cls.__name__)
+        del discovered[cls]
+
+    for cls in current_toolkit_classes:
+        # Skip classes that were manually added via add()
+        if cls in added_classes:
+            continue
+
+        module_name = _get_module_name(cls)
+        current_version = mgr.get_version(module_name) if mgr else 0
+
+        if cls in discovered:
+            # Already discovered — check if version changed
+            state = discovered[cls]
+            if state['version'] == current_version:
+                continue
+            # Version changed: refresh entries
+            logger.info("Refreshing toolkit %s (version %d → %d)",
+                        cls.__name__, state['version'], current_version)
+            instance = state['instance']
+            new_entries = _make_entries_for_toolkit(cls, instance)
+            state['entries'] = new_entries
+            state['version'] = current_version
+        else:
+            # New class: try to instantiate
+            # Check for name conflicts with manually added tools
+            public_methods = _get_public_methods(cls)
+            conflicts = [m for m in public_methods if m in entries]
+            if conflicts:
+                logger.warning(
+                    "Auto-discovered toolkit %s has methods %s that conflict "
+                    "with pre-registered tools; skipping conflicting methods",
+                    cls.__name__, conflicts,
+                )
+                public_methods = [m for m in public_methods if m not in entries]
+                if not public_methods:
+                    continue
+
+            try:
+                instance = cls()
+            except Exception:
+                logger.debug("Cannot auto-instantiate %s (needs constructor args), skipping",
+                             cls.__name__)
+                continue
+
+            logger.info("Auto-discovered toolkit: %s with methods %s",
+                        cls.__name__, public_methods)
+            tk_entries = _make_entries_for_toolkit(cls, instance)
+            # Remove conflicting entries
+            for conflict in conflicts:
+                tk_entries.pop(conflict, None)
+            discovered[cls] = {
+                'instance': instance,
+                'entries': tk_entries,
+                'version': current_version,
+                'module': module_name,
+            }
+
+
+def _all_entries(self: ToolSet) -> dict[str, ToolEntry]:
+    """Get all entries: manually added + auto-discovered."""
+    entries = dict(_get_entries(self))  # copy to avoid mutation
+    discovered = _get_discovered(self)
+    for state in discovered.values():
+        for name, entry in state['entries'].items():
+            if name not in entries:  # pre-registered takes priority
+                entries[name] = entry
+    return entries
+
+
+# ---------------------------------------------------------------------------
+# ToolSet method implementations
+# ---------------------------------------------------------------------------
 
 @mutagent.impl(ToolSet.add)
 def add(self: ToolSet, source: Any, methods: list[str] | None = None) -> None:
@@ -37,6 +231,10 @@ def add(self: ToolSet, source: Any, methods: list[str] | None = None) -> None:
     # Object instance: register its methods
     cls = type(source)
     cls_dict = cls.__dict__
+
+    # Track this class as manually added (skip in auto-discovery)
+    added_classes = _get_added_classes(self)
+    added_classes.add(cls)
 
     if methods is not None:
         method_names = methods
@@ -70,29 +268,41 @@ def remove(self: ToolSet, tool_name: str) -> bool:
     if tool_name in entries:
         del entries[tool_name]
         return True
+    # Also check discovered entries
+    discovered = _get_discovered(self)
+    for state in discovered.values():
+        if tool_name in state['entries']:
+            del state['entries'][tool_name]
+            return True
     return False
 
 
 @mutagent.impl(ToolSet.query)
 def query(self: ToolSet, tool_name: str) -> ToolSchema | None:
     """Query a tool's schema by name."""
-    entries = _get_entries(self)
-    entry = entries.get(tool_name)
+    if getattr(self, 'auto_discover', False):
+        _refresh_discovered(self)
+    all_entries = _all_entries(self)
+    entry = all_entries.get(tool_name)
     return entry.schema if entry else None
 
 
 @mutagent.impl(ToolSet.get_tools)
 def get_tools(self: ToolSet) -> list[ToolSchema]:
-    """Return all tool schemas."""
-    entries = _get_entries(self)
-    return [entry.schema for entry in entries.values()]
+    """Return all tool schemas (static + auto-discovered)."""
+    if getattr(self, 'auto_discover', False):
+        _refresh_discovered(self)
+    all_entries = _all_entries(self)
+    return [entry.schema for entry in all_entries.values()]
 
 
 @mutagent.impl(ToolSet.dispatch)
 def dispatch(self: ToolSet, tool_call: ToolCall) -> ToolResult:
     """Dispatch a tool call to the corresponding implementation."""
-    entries = _get_entries(self)
-    entry = entries.get(tool_call.name)
+    if getattr(self, 'auto_discover', False):
+        _refresh_discovered(self)
+    all_entries = _all_entries(self)
+    entry = all_entries.get(tool_call.name)
     if entry is None:
         return ToolResult(
             tool_call_id=tool_call.id,

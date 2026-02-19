@@ -6,7 +6,7 @@ import types
 from typing import Any
 
 import mutagent
-from mutagent.essential_tools import EssentialTools
+from mutagent.toolkits.module_toolkit import ModuleToolkit
 
 
 def _format_member(name: str, obj: Any, indent: str = "") -> str:
@@ -61,8 +61,8 @@ def _inspect_module_obj(mod: types.ModuleType, depth: int, current_depth: int = 
     return "\n".join(lines)
 
 
-@mutagent.impl(EssentialTools.inspect_module)
-def inspect_module(self: EssentialTools, module_path: str = "", depth: int = 2) -> str:
+@mutagent.impl(ModuleToolkit.inspect_module)
+def inspect_module(self: ModuleToolkit, module_path: str = "", depth: int = 2) -> str:
     """Inspect the structure of a Python module."""
     parts = []
 

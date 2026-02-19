@@ -5,12 +5,12 @@ from __future__ import annotations
 from datetime import datetime
 
 import mutagent
-from mutagent.essential_tools import EssentialTools
+from mutagent.toolkits.log_toolkit import LogToolkit
 
 
-@mutagent.impl(EssentialTools.query_logs)
+@mutagent.impl(LogToolkit.query_logs)
 def query_logs(
-    self: EssentialTools,
+    self: LogToolkit,
     pattern: str = "",
     level: str = "DEBUG",
     limit: int = 50,

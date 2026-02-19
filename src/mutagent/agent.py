@@ -9,7 +9,7 @@ import mutagent
 if TYPE_CHECKING:
     from mutagent.client import LLMClient
     from mutagent.messages import InputEvent, StreamEvent, ToolCall, ToolResult
-    from mutagent.tool_set import ToolSet
+    from mutagent.tools import ToolSet
 
 
 class Agent(mutagent.Declaration):

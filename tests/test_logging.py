@@ -15,7 +15,7 @@ from mutagent.runtime.log_store import (
     _tool_log_buffer,
 )
 from mutagent.runtime.api_recorder import ApiRecorder
-from mutagent.essential_tools import EssentialTools
+from mutagent.toolkits.log_toolkit import LogToolkit
 from mutagent.runtime.module_manager import ModuleManager
 
 import mutagent.builtins  # noqa: F401  -- register all @impl
@@ -268,7 +268,7 @@ class TestQueryLogsTool:
     def tools(self):
         mgr = ModuleManager()
         log_store = LogStore()
-        t = EssentialTools(module_manager=mgr, log_store=log_store)
+        t = LogToolkit(log_store=log_store)
         yield t
         mgr.cleanup()
 

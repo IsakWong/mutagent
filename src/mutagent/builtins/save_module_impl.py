@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 import mutagent
-from mutagent.essential_tools import EssentialTools
+from mutagent.toolkits.module_toolkit import ModuleToolkit
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +14,8 @@ _LEVEL_DIRS = {
 }
 
 
-@mutagent.impl(EssentialTools.save_module)
-def save_module(self: EssentialTools, module_path: str, level: str = "project") -> str:
+@mutagent.impl(ModuleToolkit.save_module)
+def save_module(self: ModuleToolkit, module_path: str, level: str = "project") -> str:
     """Persist a memory-defined module to disk."""
     try:
         dir_factory = _LEVEL_DIRS.get(level)

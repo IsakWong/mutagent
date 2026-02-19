@@ -7,7 +7,7 @@ import mutagent
 from mutagent.agent import Agent
 from mutagent.messages import InputEvent, Message, StreamEvent, ToolCall, ToolResult
 from mutagent.runtime.log_store import _tool_log_buffer
-from mutagent.tool_set import ToolEntry
+from mutagent.tools import ToolEntry
 
 logger = logging.getLogger(__name__)
 
