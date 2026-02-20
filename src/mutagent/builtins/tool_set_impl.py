@@ -280,7 +280,7 @@ def remove(self: ToolSet, tool_name: str) -> bool:
 @mutagent.impl(ToolSet.query)
 def query(self: ToolSet, tool_name: str) -> ToolSchema | None:
     """Query a tool's schema by name."""
-    if getattr(self, 'auto_discover', False):
+    if self.auto_discover:
         _refresh_discovered(self)
     all_entries = _all_entries(self)
     entry = all_entries.get(tool_name)
@@ -290,7 +290,7 @@ def query(self: ToolSet, tool_name: str) -> ToolSchema | None:
 @mutagent.impl(ToolSet.get_tools)
 def get_tools(self: ToolSet) -> list[ToolSchema]:
     """Return all tool schemas (static + auto-discovered)."""
-    if getattr(self, 'auto_discover', False):
+    if self.auto_discover:
         _refresh_discovered(self)
     all_entries = _all_entries(self)
     return [entry.schema for entry in all_entries.values()]
@@ -299,7 +299,7 @@ def get_tools(self: ToolSet) -> list[ToolSchema]:
 @mutagent.impl(ToolSet.dispatch)
 def dispatch(self: ToolSet, tool_call: ToolCall) -> ToolResult:
     """Dispatch a tool call to the corresponding implementation."""
-    if getattr(self, 'auto_discover', False):
+    if self.auto_discover:
         _refresh_discovered(self)
     all_entries = _all_entries(self)
     entry = all_entries.get(tool_call.name)

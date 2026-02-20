@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import mutagent
+from mutagent import field
 
 if TYPE_CHECKING:
     from mutagent.messages import Content, StreamEvent
@@ -73,7 +74,7 @@ class UserIO(mutagent.Declaration):
         block_handlers: Registry mapping block type strings to BlockHandler instances.
     """
 
-    block_handlers: dict
+    block_handlers: dict = field(default_factory=dict)
 
     def render_event(self, event: StreamEvent) -> None:
         """Render a streaming event from the Agent.

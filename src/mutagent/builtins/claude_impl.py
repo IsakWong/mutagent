@@ -338,11 +338,10 @@ def send_message(
         logger.debug("Usage: %s", response_obj.usage)
 
         # Record API call if recorder is available
-        recorder = getattr(self, "api_recorder", None)
-        if recorder is not None:
+        if self.api_recorder is not None:
             new_message = claude_messages[-1] if claude_messages else {}
             response_data = _response_to_dict(response_obj)
-            recorder.record_call(
+            self.api_recorder.record_call(
                 messages=claude_messages,
                 new_message=new_message,
                 response=response_data,

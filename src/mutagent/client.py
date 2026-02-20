@@ -28,7 +28,7 @@ class LLMClient(mutagent.Declaration):
     model: str
     api_key: str
     base_url: str
-    api_recorder: ApiRecorder | None
+    api_recorder: ApiRecorder | None = None
 
     def send_message(
         self,

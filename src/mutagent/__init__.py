@@ -2,7 +2,7 @@
 
 __version__ = "0.1.0"
 
-from mutobj import Declaration, impl, register_module_impls, unregister_module_impls
+from mutobj import Declaration, impl, field, register_module_impls, unregister_module_impls
 from mutagent.tools import Toolkit
 
-__all__ = ["Declaration", "impl", "register_module_impls", "unregister_module_impls", "Toolkit"]
+__all__ = ["Declaration", "impl", "field", "register_module_impls", "unregister_module_impls", "Toolkit"]

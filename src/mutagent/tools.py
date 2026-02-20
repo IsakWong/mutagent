@@ -47,7 +47,7 @@ class ToolSet(mutagent.Declaration):
         auto_discover: Enable automatic Toolkit subclass discovery.
     """
 
-    auto_discover: bool
+    auto_discover: bool = False
 
     def add(self, source: Any, methods: list[str] | None = None) -> None:
         """Add tools from a source.
