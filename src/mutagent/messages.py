@@ -90,10 +90,12 @@ class InputEvent:
     Attributes:
         type: Event type. Currently only "user_message".
         text: User message text (for user_message).
+        data: Structured data (interaction results, attachments, etc.).
     """
 
     type: str
     text: str = ""
+    data: dict = field(default_factory=dict)
 
 
 @dataclass

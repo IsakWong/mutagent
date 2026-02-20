@@ -16,6 +16,9 @@ from mutagent.messages import Content
 from mutagent.userio import UserIO
 
 
+from mutagent.builtins.userio_impl import _transfer_pending_interaction
+
+
 # Block patterns (same as base terminal)
 _BLOCK_OPEN_RE = re.compile(r'^```mutagent:(\w+)(.*)$')
 _BLOCK_CLOSE_RE = re.compile(r'^```\s*$')
@@ -79,6 +82,7 @@ def _reset_parse_state(userio):
     if ps is not None:
         if ps['state'] == 'IN_BLOCK' and ps['handler'] is not None:
             ps['handler'].on_end()
+            _transfer_pending_interaction(userio, ps['handler'])
         # Flush any remaining text_buf
         if ps['line_buf']:
             ps['text_buf'] += ps['line_buf']
@@ -155,6 +159,7 @@ def _process_complete_line(userio, ps, line):
         if _BLOCK_CLOSE_RE.match(line):
             # Transition: IN_BLOCK -> NORMAL
             ps['handler'].on_end()
+            _transfer_pending_interaction(userio, ps['handler'])
             ps['state'] = 'NORMAL'
             ps['handler'] = None
             ps['block_type'] = ''
@@ -247,3 +252,4 @@ def present(self, content) -> None:
         # Inject console into content metadata for handler
         content.metadata['console'] = console
         handler.render(content)
+        _transfer_pending_interaction(self, handler)

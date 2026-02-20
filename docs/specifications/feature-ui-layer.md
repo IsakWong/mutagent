@@ -416,19 +416,19 @@ mutagent/
   - [x] ThinkingHandler（基础终端：流式输出）
   - 状态：✅ 已完成
 
-### 阶段四：双向交互块 [待开始]
+### 阶段四：双向交互块 [✅ 已完成]
 
-- [ ] **Task 4.1**: 实现 AskHandler
-  - [ ] 基础终端：缓冲块内容，on_end 时打印问题和选项，等待用户文本输入
-  - [ ] 用户响应作为 InputEvent 返回
-  - [ ] 添加单元测试
-  - 状态：⏸️ 待开始
+- [x] **Task 4.1**: 实现 AskHandler
+  - [x] 基础终端：缓冲块内容，on_end 时打印问题和选项，等待用户文本输入
+  - [x] 用户响应作为 InputEvent 返回
+  - [x] 添加单元测试
+  - 状态：✅ 已完成（详见 `feature-interactive-blocks.md`）
 
-- [ ] **Task 4.2**: 实现 ConfirmHandler
-  - [ ] 基础终端：y/n 提示
-  - [ ] 用户响应作为 InputEvent 返回
-  - [ ] 添加单元测试
-  - 状态：⏸️ 待开始
+- [x] **Task 4.2**: 实现 ConfirmHandler
+  - [x] 基础终端：y/n 提示
+  - [x] 用户响应作为 InputEvent 返回
+  - [x] 添加单元测试
+  - 状态：✅ 已完成（详见 `feature-interactive-blocks.md`）
 
 ### 阶段五：多 Agent 支持 [暂不开始]
 
@@ -449,7 +449,7 @@ mutagent/
   - [ ] 焦点 Agent 空闲时自动切换到活跃 Agent
   - 状态：⏸️ 待开始
 
-### 阶段六：extras 基础设施 [部分完成]
+### 阶段六：extras 基础设施 [✅ 已完成]
 
 - [x] **Task 6.1**: 创建 extras 目录结构
   - [x] 创建 `src/mutagent/extras/` 作为命名空间包
@@ -457,9 +457,9 @@ mutagent/
   - [x] 更新 `pyproject.toml` 添加 `[project.optional-dependencies]`（rich, tui, web）
   - 状态：✅ 已完成
 
-- [ ] **Task 6.2**: 实现 rich 增强终端（示例 extras 模块）
-  - [ ] 创建 `extras/rich/` 模块
-  - [ ] 通过 `@impl` 覆盖 UserIO 的 render_event（添加 markdown 渲染）
-  - [ ] 实现 rich 版 BlockHandler（语法高亮、彩色标记等）
-  - [ ] 添加单元测试
-  - 状态：⏸️ 待开始
+- [x] **Task 6.2**: 实现 rich 增强终端（示例 extras 模块）
+  - [x] 创建 `extras/rich/` 模块
+  - [x] 通过 `@impl` 覆盖 UserIO 的 render_event（添加 markdown 渲染）
+  - [x] 实现 rich 版 BlockHandler（语法高亮、彩色标记等）
+  - [x] 添加单元测试
+  - 状态：✅ 已完成

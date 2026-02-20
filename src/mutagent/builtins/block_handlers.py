@@ -123,3 +123,117 @@ class ThinkingHandler(BlockHandler):
     def render(self, content):
         if content.body:
             print(content.body, flush=True)
+
+
+# ---------------------------------------------------------------------------
+# Interactive block helpers
+# ---------------------------------------------------------------------------
+
+def _parse_ask_block(lines):
+    """Parse ask block lines into question and options.
+
+    Lines starting with ``- `` are treated as option lines. All non-empty
+    lines before the first option form the question text.
+
+    Args:
+        lines: List of block content lines.
+
+    Returns:
+        Tuple of (question_str, options_list).
+    """
+    question_parts = []
+    options = []
+    in_options = False
+    for line in lines:
+        if line.startswith('- '):
+            in_options = True
+            options.append(line[2:])
+        elif not in_options and line.strip():
+            question_parts.append(line)
+    return '\n'.join(question_parts), options
+
+
+# ---------------------------------------------------------------------------
+# Interactive block handlers
+# ---------------------------------------------------------------------------
+
+class AskHandler(BlockHandler):
+    """Handler for mutagent:ask blocks.
+
+    Basic terminal: streams lines as plain text, registers a pending
+    interaction on block end with parsed question and options.
+    """
+    _BLOCK_TYPE = "ask"
+
+    def on_start(self, metadata):
+        object.__setattr__(self, '_buffer', [])
+
+    def on_line(self, text):
+        print(text, flush=True)
+        buf = getattr(self, '_buffer', None)
+        if buf is not None:
+            buf.append(text)
+
+    def on_end(self):
+        buf = getattr(self, '_buffer', [])
+        question, options = _parse_ask_block(buf)
+        object.__setattr__(self, '_pending_interaction', {
+            'type': 'ask',
+            'question': question,
+            'options': options,
+            'result': None,
+        })
+        object.__setattr__(self, '_buffer', None)
+
+    def render(self, content):
+        if content.body:
+            print(content.body, flush=True)
+        lines = content.body.split('\n') if content.body else []
+        question, options = _parse_ask_block(lines)
+        object.__setattr__(self, '_pending_interaction', {
+            'type': 'ask',
+            'question': question,
+            'options': options,
+            'result': None,
+        })
+
+
+class ConfirmHandler(BlockHandler):
+    """Handler for mutagent:confirm blocks.
+
+    Basic terminal: streams lines as plain text, registers a pending
+    interaction on block end with the full message as question.
+    """
+    _BLOCK_TYPE = "confirm"
+
+    def on_start(self, metadata):
+        object.__setattr__(self, '_buffer', [])
+
+    def on_line(self, text):
+        print(text, flush=True)
+        buf = getattr(self, '_buffer', None)
+        if buf is not None:
+            buf.append(text)
+
+    def on_end(self):
+        buf = getattr(self, '_buffer', [])
+        question = '\n'.join(line for line in buf if line.strip())
+        object.__setattr__(self, '_pending_interaction', {
+            'type': 'confirm',
+            'question': question,
+            'options': [],
+            'result': None,
+        })
+        object.__setattr__(self, '_buffer', None)
+
+    def render(self, content):
+        if content.body:
+            print(content.body, flush=True)
+        lines = content.body.split('\n') if content.body else []
+        question = '\n'.join(line for line in lines if line.strip())
+        object.__setattr__(self, '_pending_interaction', {
+            'type': 'confirm',
+            'question': question,
+            'options': [],
+            'result': None,
+        })

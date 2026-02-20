@@ -46,6 +46,26 @@ def block_handler_render(self, content) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Pending interaction transfer
+# ---------------------------------------------------------------------------
+
+def _transfer_pending_interaction(userio, handler):
+    """Transfer a pending interaction from handler to UserIO's list.
+
+    Checks handler for a ``_pending_interaction`` attribute. If present,
+    appends it to ``userio._pending_interactions`` and clears it from handler.
+    """
+    pending = getattr(handler, '_pending_interaction', None)
+    if pending is not None:
+        interactions = getattr(userio, '_pending_interactions', None)
+        if interactions is None:
+            interactions = []
+            object.__setattr__(userio, '_pending_interactions', interactions)
+        interactions.append(pending)
+        object.__setattr__(handler, '_pending_interaction', None)
+
+
+# ---------------------------------------------------------------------------
 # Streaming block detection state machine
 # ---------------------------------------------------------------------------
 
@@ -70,6 +90,7 @@ def _reset_parse_state(userio):
         # Flush any buffered text
         if ps['state'] == 'IN_BLOCK' and ps['handler'] is not None:
             ps['handler'].on_end()
+            _transfer_pending_interaction(userio, ps['handler'])
         if ps['line_buf']:
             print(ps['line_buf'], end="", flush=True)
         ps['state'] = 'NORMAL'
@@ -127,6 +148,7 @@ def _process_complete_line(userio, ps, line):
         if _BLOCK_CLOSE_RE.match(line):
             # Transition: IN_BLOCK → NORMAL (FLUSH)
             ps['handler'].on_end()
+            _transfer_pending_interaction(userio, ps['handler'])
             ps['state'] = 'NORMAL'
             ps['handler'] = None
             ps['block_type'] = ''
@@ -181,6 +203,7 @@ def present(self, content) -> None:
             print(f"{prefix}{content.body}", flush=True)
     else:
         handler.render(content)
+        _transfer_pending_interaction(self, handler)
 
 
 @mutagent.impl(UserIO.read_input)
@@ -214,7 +237,15 @@ def input_stream(self):
                 user_input = self.read_input()
                 if user_input:
                     break
-            yield InputEvent(type="user_message", text=user_input)
+            # Collect pending interactions
+            data = {}
+            pending = getattr(self, '_pending_interactions', None)
+            if pending:
+                for i, interaction in enumerate(pending):
+                    interaction['id'] = i
+                data['interactions'] = list(pending)
+                pending.clear()
+            yield InputEvent(type="user_message", text=user_input, data=data)
         except KeyboardInterrupt:
             if self.confirm_exit():
                 print("Bye.")

@@ -639,3 +639,407 @@ class TestDefaultHandler:
         captured = capsys.readouterr()
         assert "```custom" in captured.out
         assert "raw content" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# InputEvent.data field tests (Task 4.1)
+# ---------------------------------------------------------------------------
+
+from mutagent.messages import InputEvent
+
+
+class TestInputEventData:
+
+    def test_default_data_is_empty_dict(self):
+        event = InputEvent(type="user_message", text="hello")
+        assert event.data == {}
+
+    def test_data_with_interactions(self):
+        interactions = [{'id': 0, 'type': 'ask', 'question': 'Q?', 'options': [], 'result': None}]
+        event = InputEvent(type="user_message", text="hello", data={'interactions': interactions})
+        assert event.data['interactions'] == interactions
+
+    def test_data_default_independent(self):
+        e1 = InputEvent(type="user_message")
+        e2 = InputEvent(type="user_message")
+        e1.data['key'] = 'value'
+        assert 'key' not in e2.data
+
+    def test_existing_construction_compatible(self):
+        event = InputEvent(type="user_message", text="test")
+        assert event.type == "user_message"
+        assert event.text == "test"
+        assert event.data == {}
+
+    def test_equality_with_data(self):
+        e1 = InputEvent(type="user_message", text="hi", data={'k': 1})
+        e2 = InputEvent(type="user_message", text="hi", data={'k': 1})
+        assert e1 == e2
+
+    def test_inequality_with_different_data(self):
+        e1 = InputEvent(type="user_message", text="hi", data={'k': 1})
+        e2 = InputEvent(type="user_message", text="hi", data={'k': 2})
+        assert e1 != e2
+
+
+# ---------------------------------------------------------------------------
+# _parse_ask_block tests (Task 4.2)
+# ---------------------------------------------------------------------------
+
+from mutagent.builtins.block_handlers import _parse_ask_block
+
+
+class TestParseAskBlock:
+
+    def test_standard_format(self):
+        lines = ["Which color?", "", "- Red", "- Green", "- Blue"]
+        question, options = _parse_ask_block(lines)
+        assert question == "Which color?"
+        assert options == ["Red", "Green", "Blue"]
+
+    def test_no_options(self):
+        lines = ["What is your name?"]
+        question, options = _parse_ask_block(lines)
+        assert question == "What is your name?"
+        assert options == []
+
+    def test_empty_block(self):
+        question, options = _parse_ask_block([])
+        assert question == ""
+        assert options == []
+
+    def test_multiline_question(self):
+        lines = ["Line 1", "Line 2", "", "- A", "- B"]
+        question, options = _parse_ask_block(lines)
+        assert question == "Line 1\nLine 2"
+        assert options == ["A", "B"]
+
+    def test_options_only(self):
+        lines = ["- A", "- B"]
+        question, options = _parse_ask_block(lines)
+        assert question == ""
+        assert options == ["A", "B"]
+
+    def test_blank_lines_ignored_in_question(self):
+        lines = ["", "Question text", "", "- Option"]
+        question, options = _parse_ask_block(lines)
+        assert question == "Question text"
+        assert options == ["Option"]
+
+
+# ---------------------------------------------------------------------------
+# AskHandler tests (Task 4.2)
+# ---------------------------------------------------------------------------
+
+class TestAskHandler:
+
+    def test_on_line_prints_and_buffers(self, capsys):
+        handler = bh.AskHandler(block_type="ask")
+        handler.on_start({})
+        handler.on_line("Which color?")
+        handler.on_line("- Red")
+        captured = capsys.readouterr()
+        assert "Which color?" in captured.out
+        assert "- Red" in captured.out
+
+    def test_on_end_sets_pending_interaction(self):
+        handler = bh.AskHandler(block_type="ask")
+        handler.on_start({})
+        handler.on_line("Pick one:")
+        handler.on_line("- A")
+        handler.on_line("- B")
+        handler.on_end()
+        pending = getattr(handler, '_pending_interaction', None)
+        assert pending is not None
+        assert pending['type'] == 'ask'
+        assert pending['question'] == 'Pick one:'
+        assert pending['options'] == ['A', 'B']
+        assert pending['result'] is None
+
+    def test_on_end_empty_block(self):
+        handler = bh.AskHandler(block_type="ask")
+        handler.on_start({})
+        handler.on_end()
+        pending = getattr(handler, '_pending_interaction', None)
+        assert pending is not None
+        assert pending['question'] == ''
+        assert pending['options'] == []
+
+    def test_render_sets_pending_interaction(self, capsys):
+        handler = bh.AskHandler(block_type="ask")
+        content = Content(type="ask", body="Question?\n\n- Yes\n- No")
+        handler.render(content)
+        captured = capsys.readouterr()
+        assert "Question?" in captured.out
+        pending = getattr(handler, '_pending_interaction', None)
+        assert pending is not None
+        assert pending['type'] == 'ask'
+        assert pending['question'] == 'Question?'
+        assert pending['options'] == ['Yes', 'No']
+
+    def test_render_empty_body(self, capsys):
+        handler = bh.AskHandler(block_type="ask")
+        content = Content(type="ask", body="")
+        handler.render(content)
+        pending = getattr(handler, '_pending_interaction', None)
+        assert pending is not None
+        assert pending['question'] == ''
+
+    def test_streaming_integration(self, capsys):
+        handlers = discover_block_handlers()
+        userio = UserIO(block_handlers=handlers)
+        _send_text(userio, "```mutagent:ask\nWhich option?\n- A\n- B\n```\n")
+        captured = capsys.readouterr()
+        assert "Which option?" in captured.out
+        assert "- A" in captured.out
+        assert "- B" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# ConfirmHandler tests (Task 4.3)
+# ---------------------------------------------------------------------------
+
+class TestConfirmHandler:
+
+    def test_on_line_prints_and_buffers(self, capsys):
+        handler = bh.ConfirmHandler(block_type="confirm")
+        handler.on_start({})
+        handler.on_line("Are you sure?")
+        captured = capsys.readouterr()
+        assert "Are you sure?" in captured.out
+
+    def test_on_end_sets_pending_interaction(self):
+        handler = bh.ConfirmHandler(block_type="confirm")
+        handler.on_start({})
+        handler.on_line("Proceed with deletion?")
+        handler.on_end()
+        pending = getattr(handler, '_pending_interaction', None)
+        assert pending is not None
+        assert pending['type'] == 'confirm'
+        assert pending['question'] == 'Proceed with deletion?'
+        assert pending['options'] == []
+        assert pending['result'] is None
+
+    def test_on_end_multiline(self):
+        handler = bh.ConfirmHandler(block_type="confirm")
+        handler.on_start({})
+        handler.on_line("Line 1")
+        handler.on_line("Line 2")
+        handler.on_end()
+        pending = getattr(handler, '_pending_interaction', None)
+        assert pending['question'] == 'Line 1\nLine 2'
+
+    def test_on_end_empty_block(self):
+        handler = bh.ConfirmHandler(block_type="confirm")
+        handler.on_start({})
+        handler.on_end()
+        pending = getattr(handler, '_pending_interaction', None)
+        assert pending is not None
+        assert pending['question'] == ''
+
+    def test_render_sets_pending_interaction(self, capsys):
+        handler = bh.ConfirmHandler(block_type="confirm")
+        content = Content(type="confirm", body="Are you sure?")
+        handler.render(content)
+        captured = capsys.readouterr()
+        assert "Are you sure?" in captured.out
+        pending = getattr(handler, '_pending_interaction', None)
+        assert pending is not None
+        assert pending['type'] == 'confirm'
+        assert pending['question'] == 'Are you sure?'
+        assert pending['options'] == []
+
+    def test_streaming_integration(self, capsys):
+        handlers = discover_block_handlers()
+        userio = UserIO(block_handlers=handlers)
+        _send_text(userio, "```mutagent:confirm\nDelete all files?\n```\n")
+        captured = capsys.readouterr()
+        assert "Delete all files?" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# _transfer_pending_interaction tests (Task 4.4)
+# ---------------------------------------------------------------------------
+
+from mutagent.builtins.userio_impl import _transfer_pending_interaction
+
+
+class TestTransferPendingInteraction:
+
+    def test_transfer_with_pending(self):
+        userio = UserIO(block_handlers={})
+        handler = bh.AskHandler(block_type="ask")
+        object.__setattr__(handler, '_pending_interaction', {
+            'type': 'ask', 'question': 'Q?', 'options': [], 'result': None,
+        })
+        _transfer_pending_interaction(userio, handler)
+        interactions = getattr(userio, '_pending_interactions', [])
+        assert len(interactions) == 1
+        assert interactions[0]['question'] == 'Q?'
+        assert getattr(handler, '_pending_interaction', 'NOT_NONE') is None
+
+    def test_transfer_without_pending(self):
+        userio = UserIO(block_handlers={})
+        handler = BlockHandler(block_type="test")
+        _transfer_pending_interaction(userio, handler)
+        interactions = getattr(userio, '_pending_interactions', None)
+        assert interactions is None or len(interactions) == 0
+
+    def test_multiple_transfers(self):
+        userio = UserIO(block_handlers={})
+        h1 = bh.AskHandler(block_type="ask")
+        h2 = bh.ConfirmHandler(block_type="confirm")
+        object.__setattr__(h1, '_pending_interaction', {
+            'type': 'ask', 'question': 'Q1?', 'options': ['A'], 'result': None,
+        })
+        object.__setattr__(h2, '_pending_interaction', {
+            'type': 'confirm', 'question': 'Sure?', 'options': [], 'result': None,
+        })
+        _transfer_pending_interaction(userio, h1)
+        _transfer_pending_interaction(userio, h2)
+        interactions = getattr(userio, '_pending_interactions', [])
+        assert len(interactions) == 2
+        assert interactions[0]['type'] == 'ask'
+        assert interactions[1]['type'] == 'confirm'
+
+    def test_process_complete_line_transfers(self, capsys):
+        """Integration: closing fence triggers transfer via _process_complete_line."""
+        handlers = discover_block_handlers()
+        userio = UserIO(block_handlers=handlers)
+        _send_text(userio, "```mutagent:ask\nQuestion?\n- A\n```\n")
+        interactions = getattr(userio, '_pending_interactions', [])
+        assert len(interactions) == 1
+        assert interactions[0]['type'] == 'ask'
+
+    def test_reset_parse_state_transfers(self, capsys):
+        """Integration: turn_done on unclosed block triggers transfer via _reset_parse_state."""
+        handlers = discover_block_handlers()
+        userio = UserIO(block_handlers=handlers)
+        _send_text(userio, "```mutagent:confirm\nReady?\n")
+        # Block not closed; turn_done should close and transfer
+        _send_turn_done(userio)
+        interactions = getattr(userio, '_pending_interactions', [])
+        assert len(interactions) == 1
+        assert interactions[0]['type'] == 'confirm'
+
+    def test_present_transfers(self, capsys):
+        """Integration: present() path triggers transfer."""
+        handlers = discover_block_handlers()
+        userio = UserIO(block_handlers=handlers)
+        content = Content(type="ask", body="Pick?\n- X\n- Y")
+        userio.present(content)
+        interactions = getattr(userio, '_pending_interactions', [])
+        assert len(interactions) == 1
+        assert interactions[0]['type'] == 'ask'
+        assert interactions[0]['options'] == ['X', 'Y']
+
+
+# ---------------------------------------------------------------------------
+# input_stream integration tests (Task 4.5)
+# ---------------------------------------------------------------------------
+
+class TestInputStreamInteractions:
+
+    def test_with_pending_interactions(self):
+        handlers = discover_block_handlers()
+        userio = UserIO(block_handlers=handlers)
+        # Send an ask block to create pending interactions
+        _send_text(userio, "```mutagent:ask\nQuestion?\n- A\n- B\n```\n")
+        _send_turn_done(userio)
+        # Mock read_input to return user text
+        with patch.object(type(userio), 'read_input', return_value="my answer"):
+            stream = userio.input_stream()
+            event = next(stream)
+        assert event.text == "my answer"
+        assert 'interactions' in event.data
+        interactions = event.data['interactions']
+        assert len(interactions) == 1
+        assert interactions[0]['id'] == 0
+        assert interactions[0]['type'] == 'ask'
+        assert interactions[0]['question'] == 'Question?'
+        assert interactions[0]['options'] == ['A', 'B']
+        assert interactions[0]['result'] is None
+
+    def test_without_pending_interactions(self):
+        userio = UserIO(block_handlers={})
+        with patch.object(type(userio), 'read_input', return_value="hello"):
+            stream = userio.input_stream()
+            event = next(stream)
+        assert event.text == "hello"
+        assert event.data == {}
+
+    def test_multiple_pending_collected(self):
+        handlers = discover_block_handlers()
+        userio = UserIO(block_handlers=handlers)
+        # Two blocks
+        _send_text(userio, "```mutagent:ask\nQ1?\n- A\n```\n")
+        _send_text(userio, "```mutagent:confirm\nSure?\n```\n")
+        _send_turn_done(userio)
+        with patch.object(type(userio), 'read_input', return_value="yes"):
+            stream = userio.input_stream()
+            event = next(stream)
+        interactions = event.data['interactions']
+        assert len(interactions) == 2
+        assert interactions[0]['id'] == 0
+        assert interactions[0]['type'] == 'ask'
+        assert interactions[1]['id'] == 1
+        assert interactions[1]['type'] == 'confirm'
+
+    def test_pending_cleared_after_collection(self):
+        handlers = discover_block_handlers()
+        userio = UserIO(block_handlers=handlers)
+        _send_text(userio, "```mutagent:ask\nQ?\n```\n")
+        _send_turn_done(userio)
+        with patch.object(type(userio), 'read_input', return_value="answer"):
+            stream = userio.input_stream()
+            next(stream)
+        pending = getattr(userio, '_pending_interactions', [])
+        assert len(pending) == 0
+
+
+# ---------------------------------------------------------------------------
+# End-to-end integration tests (Task 4.6)
+# ---------------------------------------------------------------------------
+
+class TestEndToEnd:
+
+    def test_ask_full_flow(self, capsys):
+        """Full flow: text_delta(ask block) → handler → pending → input_stream → data."""
+        handlers = discover_block_handlers()
+        userio = UserIO(block_handlers=handlers)
+        # Simulate LLM streaming an ask block
+        _send_text(userio, "```mutagent:ask\n")
+        _send_text(userio, "Which approach?\n")
+        _send_text(userio, "- Approach A\n")
+        _send_text(userio, "- Approach B\n")
+        _send_text(userio, "```\n")
+        _send_turn_done(userio)
+        captured = capsys.readouterr()
+        assert "Which approach?" in captured.out
+        assert "- Approach A" in captured.out
+        # Simulate user input
+        with patch.object(type(userio), 'read_input', return_value="A"):
+            stream = userio.input_stream()
+            event = next(stream)
+        assert event.text == "A"
+        assert event.data['interactions'][0]['question'] == 'Which approach?'
+        assert event.data['interactions'][0]['options'] == ['Approach A', 'Approach B']
+
+    def test_existing_handlers_unaffected(self, capsys):
+        """Existing 5 handlers (tasks/status/code/thinking/default) don't produce pending."""
+        handlers = discover_block_handlers()
+        userio = UserIO(block_handlers=handlers)
+        _send_text(userio, "```mutagent:tasks\n- item\n```\n")
+        _send_text(userio, "```mutagent:status\nOK\n```\n")
+        _send_text(userio, "```mutagent:code\nx = 1\n```\n")
+        _send_text(userio, "```mutagent:thinking\nHmm\n```\n")
+        _send_turn_done(userio)
+        pending = getattr(userio, '_pending_interactions', None)
+        assert pending is None or len(pending) == 0
+
+    def test_handler_discovery_includes_new_handlers(self):
+        handlers = discover_block_handlers()
+        assert "ask" in handlers
+        assert "confirm" in handlers
+        assert isinstance(handlers["ask"], bh.AskHandler)
+        assert isinstance(handlers["confirm"], bh.ConfirmHandler)
