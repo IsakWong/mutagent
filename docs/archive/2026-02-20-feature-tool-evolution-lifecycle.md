@@ -1,6 +1,6 @@
 # 工具演化闭环系统 设计规范
 
-**状态**：🔄 进行中
+**状态**：✅ 已完成
 **日期**：2026-02-19
 **类型**：功能设计
 
@@ -560,14 +560,14 @@ Rules:
   - [x] 删除 `feature-tool-schema-annotation.md`（内容已合并）
   - 状态：✅ 已完成
 
-### Phase 3: 持久化 [待开始]
+### Phase 3: 持久化 [✅ 已完成]
 
-- [ ] **Task 3.1**: save_module 联动 config modules
-  - [ ] save_module 检测被保存模块是否包含 Toolkit 子类
-  - [ ] 如包含，自动将模块名追加到项目级 config 的 `modules` 列表
-  - [ ] 重启后自动加载并被 auto-discover 发现
-  - [ ] 测试用例
-  - 状态：⏸️ 待开始
+- [x] **Task 3.1**: save_module 联动 config modules
+  - [x] save_module 检测被保存模块是否包含 Toolkit 子类
+  - [x] 如包含，自动将模块名追加到对应层级 config 的 `modules` 列表
+  - [x] 重启后自动加载并被 auto-discover 发现
+  - [x] 测试用例（11 个测试通过）
+  - 状态：✅ 已完成
 
 ## 5. 测试验证
 
