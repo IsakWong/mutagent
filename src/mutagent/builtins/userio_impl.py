@@ -7,6 +7,9 @@ import sys
 
 import mutagent
 from mutagent.messages import Content, InputEvent
+from mutagent.runtime.ansi import (
+    bold_cyan, bold_red, dim, green, highlight_markdown_line,
+)
 from mutagent.userio import BlockHandler, UserIO
 
 
@@ -92,7 +95,7 @@ def _reset_parse_state(userio):
             ps['handler'].on_end()
             _transfer_pending_interaction(userio, ps['handler'])
         if ps['line_buf']:
-            print(ps['line_buf'], end="", flush=True)
+            print(highlight_markdown_line(ps['line_buf']), end="", flush=True)
         ps['state'] = 'NORMAL'
         ps['line_buf'] = ''
         ps['handler'] = None
@@ -116,11 +119,9 @@ def _process_text(userio, text):
         line, ps['line_buf'] = ps['line_buf'].split('\n', 1)
         _process_complete_line(userio, ps, line)
 
-    # In NORMAL state, flush partial line buffer if it can't be a block start
-    if ps['state'] == 'NORMAL' and ps['line_buf']:
-        if not userio.block_handlers or not _could_be_block_start(ps['line_buf']):
-            print(ps['line_buf'], end="", flush=True)
-            ps['line_buf'] = ''
+    # Partial line remains in line_buf until the next \n arrives.
+    # This ensures line-start Markdown patterns (headings, lists, etc.)
+    # are detected correctly even when tokens arrive in small fragments.
 
 
 def _process_complete_line(userio, ps, line):
@@ -143,7 +144,7 @@ def _process_complete_line(userio, ps, line):
                 handler.on_start(metadata)
                 return
         # Not a block start — output as normal text with newline
-        print(line, flush=True)
+        print(highlight_markdown_line(line), flush=True)
     elif ps['state'] == 'IN_BLOCK':
         if _BLOCK_CLOSE_RE.match(line):
             # Transition: IN_BLOCK → NORMAL (FLUSH)
@@ -171,22 +172,19 @@ def render_event(self, event) -> None:
             _process_text(self, event.text)
     elif event.type == "tool_exec_start":
         name = event.tool_call.name if event.tool_call else "?"
-        args_summary = _summarize_args(
-            event.tool_call.arguments if event.tool_call else {}
-        )
-        if args_summary:
-            print(f"\n  [{name}({args_summary})]", flush=True)
-        else:
-            print(f"\n  [{name}]", flush=True)
+        args = event.tool_call.arguments if event.tool_call else {}
+        call_str = _format_tool_call(name, args)
+        print(f"\n{dim(call_str)}", flush=True)
     elif event.type == "tool_exec_end":
         if event.tool_result:
-            status = "error" if event.tool_result.is_error else "done"
-            summary = event.tool_result.content[:100]
-            if len(event.tool_result.content) > 100:
-                summary += "..."
-            print(f"  -> [{status}] {summary}", flush=True)
+            is_error = event.tool_result.is_error
+            result_str = _format_tool_result(
+                event.tool_result.content, is_error,
+            )
+            print(result_str, flush=True)
     elif event.type == "error":
-        print(f"\n[Error: {event.error}]", file=sys.stderr, flush=True)
+        print(f"\n{bold_red('[Error: ' + event.error + ']')}",
+              file=sys.stderr, flush=True)
     elif event.type == "turn_done":
         _reset_parse_state(self)
         print()
@@ -209,7 +207,7 @@ def present(self, content) -> None:
 @mutagent.impl(UserIO.read_input)
 def read_input(self) -> str:
     """Basic terminal: read a line from stdin."""
-    return input("> ").strip()
+    return input(bold_cyan("> ")).strip()
 
 
 @mutagent.impl(UserIO.confirm_exit)
@@ -255,20 +253,72 @@ def input_stream(self):
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Tool call / result formatting
 # ---------------------------------------------------------------------------
 
-def _summarize_args(args: dict) -> str:
-    """Create a short summary of tool call arguments."""
+_MAX_VALUE_LEN = 60       # max display length for a single parameter value
+_MAX_SINGLE_LINE = 80     # max total length before switching to multi-line
+_INDENT = "  "            # base indentation
+_PARAM_INDENT = "      "  # parameter indentation in multi-line mode (6 spaces)
+_PREVIEW_LINES = 4        # default number of result preview lines
+_RESULT_INDENT = "    "   # result continuation indent (4 spaces)
+
+
+def _format_value(value) -> str:
+    """Format a single argument value in Python style."""
+    if isinstance(value, str):
+        display = value
+        if len(display) > _MAX_VALUE_LEN:
+            display = display[:_MAX_VALUE_LEN - 3] + "..."
+        return f'"{display}"'
+    r = repr(value)
+    if len(r) > _MAX_VALUE_LEN:
+        r = r[:_MAX_VALUE_LEN - 3] + "..."
+    return r
+
+
+def _format_tool_call(name: str, args: dict) -> str:
+    """Format a tool call as a Python-style function call string."""
     if not args:
-        return ""
-    parts = []
-    for key, value in args.items():
-        s = str(value)
-        if len(s) > 40:
-            s = s[:37] + "..."
-        parts.append(f"{key}={s}")
-    return ", ".join(parts)
+        return f"{_INDENT}{name}()"
+
+    # Build parameter strings
+    params = [f"{k}={_format_value(v)}" for k, v in args.items()]
+
+    # Try single-line first
+    single = f"{_INDENT}{name}({', '.join(params)})"
+    if len(single) <= _MAX_SINGLE_LINE:
+        return single
+
+    # Multi-line form
+    lines = [f"{_INDENT}{name}("]
+    for p in params:
+        lines.append(f"{_PARAM_INDENT}{p},")
+    lines.append(f"{_INDENT})")
+    return "\n".join(lines)
+
+
+def _format_tool_result(content: str, is_error: bool) -> str:
+    """Format a tool result with preview and line count."""
+    color = bold_red if is_error else green
+    lines = content.split("\n") if content else [""]
+
+    if len(lines) <= _PREVIEW_LINES:
+        # Short result: show everything
+        first = f"{_INDENT}\u2192 {lines[0]}"
+        result_lines = [color(first)]
+        for extra in lines[1:]:
+            result_lines.append(color(f"{_RESULT_INDENT}{extra}"))
+        return "\n".join(result_lines)
+
+    # Long result: preview + overflow indicator
+    first = f"{_INDENT}\u2192 {lines[0]}"
+    result_lines = [color(first)]
+    for extra in lines[1:_PREVIEW_LINES]:
+        result_lines.append(color(f"{_RESULT_INDENT}{extra}"))
+    remaining = len(lines) - _PREVIEW_LINES
+    result_lines.append(dim(f"{_RESULT_INDENT}... +{remaining} lines"))
+    return "\n".join(result_lines)
 
 
 def discover_block_handlers() -> dict[str, BlockHandler]:

@@ -163,21 +163,21 @@ class TestUserIORenderEvent:
         userio.render_event(event)
         captured = capsys.readouterr()
         assert "inspect_module" in captured.out
-        assert "module_path=mutagent" in captured.out
+        assert 'module_path="mutagent"' in captured.out
 
     def test_tool_exec_start_no_args(self, userio, capsys):
         tc = ToolCall(id="tc_1", name="inspect_module", arguments={})
         event = StreamEvent(type="tool_exec_start", tool_call=tc)
         userio.render_event(event)
         captured = capsys.readouterr()
-        assert "[inspect_module]" in captured.out
+        assert "inspect_module()" in captured.out
 
     def test_tool_exec_end(self, userio, capsys):
         tr = ToolResult(tool_call_id="tc_1", content="Success result")
         event = StreamEvent(type="tool_exec_end", tool_result=tr)
         userio.render_event(event)
         captured = capsys.readouterr()
-        assert "[done]" in captured.out
+        assert "\u2192" in captured.out
         assert "Success result" in captured.out
 
     def test_tool_exec_end_error(self, userio, capsys):
@@ -185,14 +185,16 @@ class TestUserIORenderEvent:
         event = StreamEvent(type="tool_exec_end", tool_result=tr)
         userio.render_event(event)
         captured = capsys.readouterr()
-        assert "[error]" in captured.out
+        assert "\u2192" in captured.out
+        assert "Failed" in captured.out
 
     def test_tool_exec_end_long_content_truncated(self, userio, capsys):
-        tr = ToolResult(tool_call_id="tc_1", content="x" * 200)
+        tr = ToolResult(tool_call_id="tc_1", content="\n".join(f"line {i}" for i in range(20)))
         event = StreamEvent(type="tool_exec_end", tool_result=tr)
         userio.render_event(event)
         captured = capsys.readouterr()
         assert "..." in captured.out
+        assert "+16 lines" in captured.out
 
     def test_error_event(self, userio, capsys):
         event = StreamEvent(type="error", error="API failed")
@@ -406,18 +408,22 @@ class TestBlockDetectionStreaming:
         _send_text(userio, "] done\n```\n")
         assert ('on_line', '- [x] done') in handler.calls
 
-    def test_normal_text_streams_immediately(self, capsys):
+    def test_normal_text_buffers_until_newline(self, capsys):
         handler = _RecordingHandler(block_type="tasks")
         userio = UserIO(block_handlers={"tasks": handler})
-        # Text that can't be a block start should stream immediately
+        # Partial lines are buffered until newline for correct highlighting
         _send_text(userio, "Hello")
         captured = capsys.readouterr()
-        assert captured.out == "Hello"
+        assert captured.out == ""
+        # Newline triggers output
+        _send_text(userio, " world\n")
+        captured = capsys.readouterr()
+        assert "Hello world" in captured.out
 
     def test_backtick_prefix_buffers(self, capsys):
         handler = _RecordingHandler(block_type="tasks")
         userio = UserIO(block_handlers={"tasks": handler})
-        # Single backtick could be start of block - should buffer
+        # Single backtick buffers (all partial lines buffer now)
         _send_text(userio, "`")
         captured = capsys.readouterr()
         assert captured.out == ""
@@ -438,6 +444,69 @@ class TestBlockDetectionStreaming:
         assert on_end_count == 2
         assert ('on_line', '- a') in handler.calls
         assert ('on_line', '- b') in handler.calls
+
+
+class TestStreamingMarkdownHighlight:
+    """Test that Markdown highlighting works correctly with fragmented streaming."""
+
+    def test_heading_split_across_events(self, capsys):
+        """Heading prefix arrives separately from content."""
+        handler = _RecordingHandler(block_type="tasks")
+        userio = UserIO(block_handlers={"tasks": handler})
+        _send_text(userio, "## ")
+        # Should be buffered, not flushed
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        _send_text(userio, "Design\n")
+        captured = capsys.readouterr()
+        assert "## " in captured.out
+        assert "Design" in captured.out
+
+    def test_list_split_across_events(self, capsys):
+        """List marker arrives separately from content."""
+        handler = _RecordingHandler(block_type="tasks")
+        userio = UserIO(block_handlers={"tasks": handler})
+        _send_text(userio, "- ")
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        _send_text(userio, "item\n")
+        captured = capsys.readouterr()
+        assert "- " in captured.out
+        assert "item" in captured.out
+
+    def test_turn_done_flushes_partial_line(self, capsys):
+        """turn_done should flush any buffered partial line."""
+        handler = _RecordingHandler(block_type="tasks")
+        userio = UserIO(block_handlers={"tasks": handler})
+        _send_text(userio, "partial text")
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        _send_turn_done(userio)
+        captured = capsys.readouterr()
+        assert "partial text" in captured.out
+
+    def test_complete_line_outputs_immediately(self, capsys):
+        """A complete line (with newline) should output right away."""
+        handler = _RecordingHandler(block_type="tasks")
+        userio = UserIO(block_handlers={"tasks": handler})
+        _send_text(userio, "complete line\n")
+        captured = capsys.readouterr()
+        assert "complete line" in captured.out
+
+    def test_no_premature_partial_flush(self, capsys):
+        """Ensure partial lines don't leak out prematurely."""
+        handler = _RecordingHandler(block_type="tasks")
+        userio = UserIO(block_handlers={"tasks": handler})
+        # Send several fragments without newline
+        _send_text(userio, "## ")
+        _send_text(userio, "Head")
+        _send_text(userio, "ing")
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        # Now complete the line
+        _send_text(userio, "\n")
+        captured = capsys.readouterr()
+        assert "## Heading" in captured.out
 
 
 class TestBlockDetectionEdgeCases:

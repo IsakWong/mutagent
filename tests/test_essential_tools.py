@@ -80,8 +80,8 @@ class TestDefineModule:
         assert "v2" in result
 
     def test_define_syntax_error(self, tools):
-        result = tools.define_module("test_tool_patch.bad", "def f(\n")
-        assert "Error" in result
+        with pytest.raises(SyntaxError):
+            tools.define_module("test_tool_patch.bad", "def f(\n")
 
     def test_define_mutagent_module_warns(self, tools):
         result = tools.define_module("mutagent.test_warn_mod", "x = 1\n")

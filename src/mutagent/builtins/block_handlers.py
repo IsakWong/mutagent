@@ -7,7 +7,10 @@ discovered by UserIO via ``discover_block_handlers()``.
 
 from __future__ import annotations
 
+import re
+
 import mutagent
+from mutagent.runtime.ansi import cyan, dim, green, yellow
 from mutagent.userio import BlockHandler
 
 
@@ -39,16 +42,17 @@ class TasksHandler(BlockHandler):
     """Handler for mutagent:tasks blocks.
 
     Basic terminal: renders each task line immediately as it arrives.
+    Colorizes task checkmarks: [x] green, [~] yellow, [ ] dim.
     """
     _BLOCK_TYPE = "tasks"
 
     def on_line(self, text):
-        print(text, flush=True)
+        print(_colorize_task_line(text), flush=True)
 
     def render(self, content):
         if content.body:
             for line in content.body.split('\n'):
-                print(line, flush=True)
+                print(_colorize_task_line(line), flush=True)
 
 
 class StatusHandler(BlockHandler):
@@ -82,47 +86,70 @@ class StatusHandler(BlockHandler):
 class CodeHandler(BlockHandler):
     """Handler for mutagent:code blocks.
 
-    Basic terminal: outputs as a standard code block.
+    Basic terminal: outputs as a standard code block with dim fences
+    and cyan language name.
     """
     _BLOCK_TYPE = "code"
 
     def on_start(self, metadata):
         lang = metadata.get('raw', '').split()[0] if metadata.get('raw') else ''
         if lang:
-            print(f"```{lang}", flush=True)
+            print(dim("```") + cyan(lang), flush=True)
         else:
-            print("```", flush=True)
+            print(dim("```"), flush=True)
 
     def on_line(self, text):
         print(text, flush=True)
 
     def on_end(self):
-        print("```", flush=True)
+        print(dim("```"), flush=True)
 
     def render(self, content):
         lang = content.metadata.get('lang', '')
         if lang:
-            print(f"```{lang}", flush=True)
+            print(dim("```") + cyan(lang), flush=True)
         else:
-            print("```", flush=True)
+            print(dim("```"), flush=True)
         if content.body:
             print(content.body, flush=True)
-        print("```", flush=True)
+        print(dim("```"), flush=True)
 
 
 class ThinkingHandler(BlockHandler):
     """Handler for mutagent:thinking blocks.
 
-    Basic terminal: streams content as-is (real-time display).
+    Basic terminal: streams content in dim color (reduced visual weight).
     """
     _BLOCK_TYPE = "thinking"
 
     def on_line(self, text):
-        print(text, flush=True)
+        print(dim(text), flush=True)
 
     def render(self, content):
         if content.body:
-            print(content.body, flush=True)
+            for line in content.body.split('\n'):
+                print(dim(line), flush=True)
+
+
+# ---------------------------------------------------------------------------
+# Task line colorization
+# ---------------------------------------------------------------------------
+
+_TASK_CHECK_RE = re.compile(r'^(\s*(?:[-*])\s*)(\[[ x~]\])(.*)')
+
+def _colorize_task_line(line: str) -> str:
+    """Colorize task checkmark in a task list line."""
+    m = _TASK_CHECK_RE.match(line)
+    if not m:
+        return line
+    prefix, check, rest = m.group(1), m.group(2), m.group(3)
+    if check == '[x]':
+        return prefix + green(check) + rest
+    elif check == '[~]':
+        return prefix + yellow(check) + rest
+    elif check == '[ ]':
+        return prefix + dim(check) + rest
+    return line
 
 
 # ---------------------------------------------------------------------------
