@@ -45,6 +45,9 @@ class SessionInfo:
     api_file: Path | None = None
     log_lines: int = -1  # -1 = not counted
     api_calls: int = -1  # -1 = not counted
+    tool_ok_count: int = -1  # -1 = not counted
+    tool_err_count: int = -1  # -1 = not counted
+    duration_seconds: float = -1  # -1 = not computed
 
 
 @dataclass
@@ -68,6 +71,20 @@ class ApiCall:
     timestamp: str  # ISO format
     summary: str  # e.g., "user → tool_use (3 tools)"
     data: dict = field(default_factory=dict)
+    verbose_lines: list[str] = field(default_factory=list)  # extra detail lines for -v
+
+
+@dataclass
+class ToolCallInfo:
+    """Information about a single tool call extracted from API records."""
+
+    index: int  # tool call sequence number (1-based, across all API calls)
+    api_index: int  # which API call record this belongs to
+    tool_name: str
+    input_summary: str  # e.g., 'module_path="foo", source="...300 lines..."'
+    is_error: bool = False
+    result_summary: str = ""  # e.g., "ok (1308 chars)" or "error: SyntaxError line 152"
+    result_length: int = 0
 
 
 class LogQueryEngine:
@@ -80,7 +97,8 @@ class LogQueryEngine:
         """List all sessions found in the log directory.
 
         Scans for ``TIMESTAMP-log.log`` and ``TIMESTAMP-api.jsonl`` files,
-        extracts session timestamps, and pairs them together.
+        extracts session timestamps, and pairs them together.  Also computes
+        tool call statistics and session duration from API JSONL files.
         """
         if not self._log_dir.is_dir():
             return []
@@ -103,7 +121,50 @@ class LogQueryEngine:
                 n = _count_lines(path)
                 sessions[ts].api_calls = max(0, n - 1) if n >= 0 else -1
 
+        # Compute tool statistics and duration for each session with an API file
+        for info in sessions.values():
+            if info.api_file is not None:
+                _compute_session_stats(info)
+
         return sorted(sessions.values(), key=lambda s: s.timestamp)
+
+    def query_tools(
+        self,
+        session: str = "",
+        tool_name: str = "",
+        errors_only: bool = False,
+        limit: int = 0,
+    ) -> list[ToolCallInfo]:
+        """Extract tool calls from a session's API JSONL file.
+
+        Args:
+            session: Session timestamp. Empty string = latest session.
+            tool_name: Filter by tool name (exact match).
+            errors_only: If True, only return failed tool calls.
+            limit: Maximum number of entries (0 = unlimited).
+
+        Returns:
+            List of ToolCallInfo objects in call order.
+        """
+        api_file = self._resolve_api_file(session)
+        if api_file is None:
+            return []
+
+        records = _load_api_records(api_file)
+        tool_calls = _extract_tool_calls(records)
+
+        # Apply filters
+        results: list[ToolCallInfo] = []
+        for tc in tool_calls:
+            if tool_name and tc.tool_name != tool_name:
+                continue
+            if errors_only and not tc.is_error:
+                continue
+            results.append(tc)
+            if limit > 0 and len(results) >= limit:
+                break
+
+        return results
 
     def query_logs(
         self,
@@ -200,6 +261,7 @@ class LogQueryEngine:
         tool_name: str = "",
         pattern: str = "",
         limit: int = 10,
+        verbose: bool = False,
     ) -> list[ApiCall]:
         """Query API call records from a session's JSONL file.
 
@@ -209,6 +271,7 @@ class LogQueryEngine:
             tool_name: Filter by tool name in response content.
             pattern: Regex to search in response/input content.
             limit: Maximum number of entries to return.
+            verbose: If True, include tool call detail lines.
 
         Returns:
             Matching API call records.
@@ -220,6 +283,9 @@ class LogQueryEngine:
         compiled = re.compile(pattern) if pattern else None
         results: list[ApiCall] = []
 
+        # For P3 (tool_result association), track previous record's tool_use id→name
+        prev_tool_map: dict[str, str] = {}  # tool_use_id → tool_name
+
         for idx, line in enumerate(_iter_file_lines(api_file)):
             try:
                 data = json.loads(line)
@@ -230,9 +296,16 @@ class LogQueryEngine:
                 index=idx,
                 type=data.get("type", "unknown"),
                 timestamp=data.get("ts", ""),
-                summary=_make_api_summary(data),
+                summary=_make_api_summary(data, prev_tool_map),
                 data=data,
             )
+
+            # Generate verbose lines (P1)
+            if verbose:
+                call.verbose_lines = _make_verbose_lines(data)
+
+            # Update prev_tool_map for next iteration (P3)
+            prev_tool_map = _build_tool_use_map(data)
 
             # Index filter
             if call_index is not None and idx != call_index:
@@ -398,8 +471,14 @@ def _extract_time(timestamp: str) -> str:
     return ""
 
 
-def _make_api_summary(data: dict) -> str:
-    """Generate a human-readable summary of an API call record."""
+def _make_api_summary(data: dict, prev_tool_map: dict[str, str] | None = None) -> str:
+    """Generate a human-readable summary of an API call record.
+
+    Args:
+        data: The API record dict.
+        prev_tool_map: Mapping of tool_use_id → tool_name from the previous
+            record's response, used to associate tool_result with tool names (P3).
+    """
     record_type = data.get("type", "unknown")
 
     if record_type == "session":
@@ -410,13 +489,13 @@ def _make_api_summary(data: dict) -> str:
     if record_type != "call":
         return record_type
 
-    # Determine input summary
+    # Determine input summary (with P3 tool_result association)
     input_data = data.get("input", data.get("messages", []))
     if isinstance(input_data, dict):
-        input_summary = _summarize_message(input_data)
+        input_summary = _summarize_message(input_data, prev_tool_map)
     elif isinstance(input_data, list) and input_data:
         last = input_data[-1] if input_data else {}
-        input_summary = _summarize_message(last)
+        input_summary = _summarize_message(last, prev_tool_map)
     else:
         input_summary = "?"
 
@@ -446,8 +525,12 @@ def _make_api_summary(data: dict) -> str:
     return " | ".join(parts)
 
 
-def _summarize_message(msg: dict) -> str:
-    """Create a short summary of a message."""
+def _summarize_message(msg: dict, prev_tool_map: dict[str, str] | None = None) -> str:
+    """Create a short summary of a message.
+
+    When prev_tool_map is provided, tool_result blocks are annotated with the
+    corresponding tool name and error status (P3).
+    """
     content = msg.get("content", "")
     if isinstance(content, str):
         preview = content[:30]
@@ -455,7 +538,23 @@ def _summarize_message(msg: dict) -> str:
             preview += "..."
         return f'{msg.get("role", "?")}: "{preview}"'
     elif isinstance(content, list):
-        # tool_result or multi-block content
+        tool_results = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_result"]
+        if tool_results and prev_tool_map:
+            # P3: annotate with tool names and error status
+            labels: list[str] = []
+            for tr in tool_results:
+                use_id = tr.get("tool_use_id", "")
+                name = prev_tool_map.get(use_id, "")
+                is_err = tr.get("is_error", False)
+                if name and is_err:
+                    labels.append(f"{name}:error")
+                elif name:
+                    labels.append(name)
+                elif is_err:
+                    labels.append("error")
+            if labels:
+                return f'{msg.get("role", "?")}: [tool_result:{",".join(labels)}]'
+        # Fallback: original behavior
         types = [b.get("type", "?") for b in content if isinstance(b, dict)]
         return f'{msg.get("role", "?")}: [{", ".join(types)}]'
     return msg.get("role", "?")
@@ -465,6 +564,201 @@ def _api_has_tool(data: dict, tool_name: str) -> bool:
     """Check if an API record references a specific tool name."""
     text = json.dumps(data, ensure_ascii=False)
     return tool_name in text
+
+
+def _build_tool_use_map(data: dict) -> dict[str, str]:
+    """Build a mapping of tool_use_id → tool_name from a record's response."""
+    result: dict[str, str] = {}
+    response = data.get("response", {})
+    for block in response.get("content", []):
+        if isinstance(block, dict) and block.get("type") == "tool_use":
+            tid = block.get("id", "")
+            name = block.get("name", "")
+            if tid and name:
+                result[tid] = name
+    return result
+
+
+def _make_verbose_lines(data: dict) -> list[str]:
+    """Generate verbose detail lines for tool_use calls in a record (P1)."""
+    response = data.get("response", {})
+    if response.get("stop_reason") != "tool_use":
+        return []
+
+    lines: list[str] = []
+    for block in response.get("content", []):
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        name = block.get("name", "?")
+        tool_input = block.get("input", {})
+        params = _summarize_tool_input(tool_input)
+        lines.append(f"     {name}({params})")
+    return lines
+
+
+def _summarize_tool_input(tool_input: dict, max_value_len: int = 40) -> str:
+    """Summarize tool input parameters for verbose display.
+
+    Takes the first 2 keys, truncates long string values.
+    """
+    if not isinstance(tool_input, dict):
+        return ""
+    parts: list[str] = []
+    for key in list(tool_input.keys())[:2]:
+        value = tool_input[key]
+        if isinstance(value, str):
+            if "\n" in value:
+                line_count = value.count("\n") + 1
+                display = f'"...{line_count} lines..."'
+            elif len(value) > max_value_len:
+                display = f'"{value[:max_value_len]}..."'
+            else:
+                display = f'"{value}"'
+        else:
+            display = str(value)
+            if len(display) > max_value_len:
+                display = display[:max_value_len] + "..."
+        parts.append(f'{key}={display}')
+    return ", ".join(parts)
+
+
+def _load_api_records(api_file: Path) -> list[dict]:
+    """Load all records from an API JSONL file."""
+    records: list[dict] = []
+    for line in _iter_file_lines(api_file):
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return records
+
+
+def _extract_tool_calls(records: list[dict]) -> list[ToolCallInfo]:
+    """Extract all tool calls from a sequence of API records.
+
+    Correlates tool_use blocks in responses with tool_result blocks in the
+    next record's input, using tool_use_id for matching.
+    """
+    # First pass: collect all tool_use blocks with their API index
+    tool_uses: list[tuple[int, dict]] = []  # (api_index, tool_use_block)
+    for idx, rec in enumerate(records):
+        if rec.get("type") != "call":
+            continue
+        response = rec.get("response", {})
+        for block in response.get("content", []):
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                tool_uses.append((idx, block))
+
+    # Second pass: collect all tool_result blocks keyed by tool_use_id
+    result_map: dict[str, dict] = {}  # tool_use_id → tool_result block
+    for rec in records:
+        if rec.get("type") != "call":
+            continue
+        input_data = rec.get("input", {})
+        content = input_data.get("content", []) if isinstance(input_data, dict) else []
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                use_id = block.get("tool_use_id", "")
+                if use_id:
+                    result_map[use_id] = block
+
+    # Build ToolCallInfo list
+    tool_call_infos: list[ToolCallInfo] = []
+    for seq, (api_idx, tu_block) in enumerate(tool_uses, start=1):
+        use_id = tu_block.get("id", "")
+        name = tu_block.get("name", "?")
+        tool_input = tu_block.get("input", {})
+        input_summary = _summarize_tool_input(tool_input, max_value_len=30)
+
+        # Look up result
+        is_error = False
+        result_summary = ""
+        result_length = 0
+        tr_block = result_map.get(use_id)
+        if tr_block is not None:
+            is_error = bool(tr_block.get("is_error", False))
+            tr_content = tr_block.get("content", "")
+            if isinstance(tr_content, str):
+                result_length = len(tr_content)
+            elif isinstance(tr_content, list):
+                # Concatenate text blocks for length
+                result_length = sum(
+                    len(b.get("text", "")) for b in tr_content if isinstance(b, dict)
+                )
+
+            if is_error:
+                # Show first line of error message, truncated to 60 chars
+                err_text = tr_content if isinstance(tr_content, str) else ""
+                if isinstance(tr_content, list):
+                    for b in tr_content:
+                        if isinstance(b, dict) and b.get("type") == "text":
+                            err_text = b.get("text", "")
+                            break
+                first_line = err_text.split("\n")[0][:60]
+                result_summary = f"error: {first_line}"
+            else:
+                result_summary = f"ok ({result_length} chars)"
+
+        tool_call_infos.append(ToolCallInfo(
+            index=seq,
+            api_index=api_idx,
+            tool_name=name,
+            input_summary=input_summary,
+            is_error=is_error,
+            result_summary=result_summary,
+            result_length=result_length,
+        ))
+
+    return tool_call_infos
+
+
+def _compute_session_stats(info: SessionInfo) -> None:
+    """Compute tool statistics and duration for a session, updating in place."""
+    assert info.api_file is not None
+    records = _load_api_records(info.api_file)
+    if not records:
+        return
+
+    # Tool statistics
+    tool_calls = _extract_tool_calls(records)
+    info.tool_ok_count = sum(1 for tc in tool_calls if not tc.is_error)
+    info.tool_err_count = sum(1 for tc in tool_calls if tc.is_error)
+
+    # Duration: first and last record timestamps
+    timestamps: list[str] = []
+    for rec in records:
+        ts = rec.get("ts", "")
+        if ts:
+            timestamps.append(ts)
+    if len(timestamps) >= 2:
+        info.duration_seconds = _iso_diff_seconds(timestamps[0], timestamps[-1])
+
+
+def _iso_diff_seconds(ts1: str, ts2: str) -> float:
+    """Compute the difference in seconds between two ISO timestamps."""
+    from datetime import datetime, timezone
+
+    def _parse(ts: str) -> datetime | None:
+        # Handle various ISO formats
+        for fmt in (
+            "%Y-%m-%dT%H:%M:%S.%f%z",
+            "%Y-%m-%dT%H:%M:%S%z",
+            "%Y-%m-%dT%H:%M:%S.%fZ",
+            "%Y-%m-%dT%H:%M:%SZ",
+        ):
+            try:
+                return datetime.strptime(ts, fmt)
+            except ValueError:
+                continue
+        return None
+
+    dt1 = _parse(ts1)
+    dt2 = _parse(ts2)
+    if dt1 is None or dt2 is None:
+        return -1
+    return abs((dt2 - dt1).total_seconds())
 
 
 def _extract_field(data: Any, field_path: str) -> Any:

@@ -6,6 +6,7 @@ Usage::
     python -m mutagent.cli.log_query logs [options]
     python -m mutagent.cli.log_query api [options]
     python -m mutagent.cli.log_query api-detail <session> <index>
+    python -m mutagent.cli.log_query tools [options]
 """
 
 from __future__ import annotations
@@ -47,12 +48,20 @@ def main(argv: list[str] | None = None) -> None:
     api_parser.add_argument("-t", "--tool", default="", help="Filter by tool name")
     api_parser.add_argument("-p", "--pattern", default="", help="Regex pattern to search content")
     api_parser.add_argument("-n", "--limit", type=int, default=10, help="Max entries to return")
+    api_parser.add_argument("-v", "--verbose", action="store_true", help="Show tool call details")
 
     # --- api-detail ---
     detail_parser = subparsers.add_parser("api-detail", help="View API call details")
     detail_parser.add_argument("session", help="Session timestamp")
     detail_parser.add_argument("index", type=int, help="API call index (0-based)")
     detail_parser.add_argument("-f", "--field", default="", help="Field path (e.g., response.content)")
+
+    # --- tools ---
+    tools_parser = subparsers.add_parser("tools", help="List tool calls from a session")
+    tools_parser.add_argument("-s", "--session", default="", help="Session timestamp (default: latest)")
+    tools_parser.add_argument("-t", "--tool", default="", help="Filter by tool name")
+    tools_parser.add_argument("--errors", action="store_true", help="Show only failed tool calls")
+    tools_parser.add_argument("-n", "--limit", type=int, default=0, help="Max entries (0=unlimited)")
 
     args = parser.parse_args(argv)
 
@@ -70,6 +79,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_api(engine, args)
     elif args.command == "api-detail":
         _cmd_api_detail(engine, args)
+    elif args.command == "tools":
+        _cmd_tools(engine, args)
 
 
 def _cmd_sessions(engine: LogQueryEngine) -> None:
@@ -79,13 +90,30 @@ def _cmd_sessions(engine: LogQueryEngine) -> None:
         return
 
     # Header
-    print(f"{'Session':<21s} {'Log File':<35s} {'API File':<35s} {'Logs':>6s}  {'API Calls':>9s}")
+    print(
+        f"{'Session':<18s} {'Logs':>6s}  {'API':>4s}"
+        f"  {'Tools(ok/err)':>13s}  {'Duration':>8s}"
+    )
     for s in sessions:
-        log_name = s.log_file.name if s.log_file else "-"
-        api_name = s.api_file.name if s.api_file else "-"
         log_count = str(s.log_lines) if s.log_lines >= 0 else "-"
         api_count = str(s.api_calls) if s.api_calls >= 0 else "-"
-        print(f"{s.timestamp:<21s} {log_name:<35s} {api_name:<35s} {log_count:>6s}  {api_count:>9s}")
+
+        if s.tool_ok_count >= 0 or s.tool_err_count >= 0:
+            ok = max(0, s.tool_ok_count)
+            err = max(0, s.tool_err_count)
+            tools_str = f"{ok}/{err}"
+        else:
+            tools_str = "-"
+
+        if s.duration_seconds >= 0:
+            duration_str = _format_duration(s.duration_seconds)
+        else:
+            duration_str = "-"
+
+        print(
+            f"{s.timestamp:<18s} {log_count:>6s}  {api_count:>4s}"
+            f"  {tools_str:>13s}  {duration_str:>8s}"
+        )
 
 
 def _cmd_logs(engine: LogQueryEngine, args: argparse.Namespace) -> None:
@@ -119,6 +147,7 @@ def _cmd_api(engine: LogQueryEngine, args: argparse.Namespace) -> None:
         tool_name=args.tool,
         pattern=args.pattern,
         limit=args.limit,
+        verbose=args.verbose,
     )
     if not calls:
         print("No matching API records.")
@@ -128,6 +157,9 @@ def _cmd_api(engine: LogQueryEngine, args: argparse.Namespace) -> None:
         # Extract time from ISO timestamp
         time_part = _extract_iso_time(call.timestamp)
         print(f"#{call.index:02d} | {time_part} | {call.summary}")
+        # P1: verbose lines
+        for vline in call.verbose_lines:
+            print(vline)
 
 
 def _cmd_api_detail(engine: LogQueryEngine, args: argparse.Namespace) -> None:
@@ -140,6 +172,27 @@ def _cmd_api_detail(engine: LogQueryEngine, args: argparse.Namespace) -> None:
         print(result)
     else:
         print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+def _cmd_tools(engine: LogQueryEngine, args: argparse.Namespace) -> None:
+    tool_calls = engine.query_tools(
+        session=args.session,
+        tool_name=args.tool,
+        errors_only=args.errors,
+        limit=args.limit,
+    )
+    if not tool_calls:
+        print("No tool calls found.")
+        return
+
+    for tc in tool_calls:
+        summary = tc.input_summary
+        if summary:
+            line = f" #{tc.index:02d} {tc.tool_name}({summary})"
+        else:
+            line = f" #{tc.index:02d} {tc.tool_name}()"
+        result = tc.result_summary if tc.result_summary else "?"
+        print(f"{line} \u2192 {result}")
 
 
 def _extract_time_display(timestamp: str) -> str:
@@ -156,6 +209,22 @@ def _extract_iso_time(ts: str) -> str:
         time_part = ts.split("T")[1]
         return time_part[:8]
     return ts[:8]
+
+
+def _format_duration(seconds: float) -> str:
+    """Format duration in seconds as human-readable string."""
+    if seconds < 0:
+        return "-"
+    total = int(seconds)
+    if total < 60:
+        return f"{total}s"
+    minutes = total // 60
+    secs = total % 60
+    if minutes < 60:
+        return f"{minutes}m{secs:02d}s"
+    hours = minutes // 60
+    mins = minutes % 60
+    return f"{hours}h{mins:02d}m"
 
 
 if __name__ == "__main__":
