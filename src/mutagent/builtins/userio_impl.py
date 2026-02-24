@@ -331,14 +331,10 @@ def discover_block_handlers() -> dict[str, BlockHandler]:
     Returns:
         Dict mapping block type strings to BlockHandler instances.
     """
-    from mutobj.core import _class_registry
+    import mutobj
 
     handlers = {}
-    for cls in _class_registry.values():
-        if (cls is BlockHandler
-                or not isinstance(cls, type)
-                or not issubclass(cls, BlockHandler)):
-            continue
+    for cls in mutobj.discover_subclasses(BlockHandler):
         # Get the block type from the _BLOCK_TYPE class constant
         block_type = getattr(cls, '_BLOCK_TYPE', None)
         if block_type and isinstance(block_type, str):

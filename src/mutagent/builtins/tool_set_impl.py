@@ -76,14 +76,11 @@ def _make_late_bound(instance: Any, method_name: str):
 # ---------------------------------------------------------------------------
 
 def _discover_toolkit_classes() -> list[type]:
-    """Scan mutobj _class_registry for all Toolkit subclasses."""
-    from mutobj.core import _class_registry
+    """Scan mutobj registry for all Toolkit subclasses."""
+    import mutobj
     from mutagent.tools import Toolkit
 
-    return [
-        cls for (module_name, qualname), cls in _class_registry.items()
-        if cls is not Toolkit and issubclass(cls, Toolkit)
-    ]
+    return mutobj.discover_subclasses(Toolkit)
 
 
 def _get_public_methods(cls: type) -> list[str]:
@@ -121,7 +118,15 @@ def _refresh_discovered(self: ToolSet) -> None:
     Scans the class registry for Toolkit subclasses, instantiates new ones,
     refreshes stale ones (version changed), and removes gone ones.
     """
+    import mutobj
     from mutagent.runtime.module_manager import ModuleManager
+
+    # 短路：注册表无变化时跳过完整扫描
+    current_gen = mutobj.get_registry_generation()
+    last_gen = getattr(self, '_last_registry_generation', None)
+    if last_gen is not None and last_gen == current_gen:
+        return
+    object.__setattr__(self, '_last_registry_generation', current_gen)
 
     added_classes = _get_added_classes(self)
     discovered = _get_discovered(self)
