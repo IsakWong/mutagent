@@ -6,13 +6,13 @@ from mutagent.messages import Message, ToolCall, ToolResult, Response, ToolSchem
 class TestToolCall:
 
     def test_creation(self):
-        tc = ToolCall(id="tc_1", name="view_source", arguments={"target": "mutagent"})
+        tc = ToolCall(id="tc_1", name="Module-view_source", arguments={"target": "mutagent"})
         assert tc.id == "tc_1"
-        assert tc.name == "view_source"
+        assert tc.name == "Module-view_source"
         assert tc.arguments == {"target": "mutagent"}
 
     def test_default_arguments(self):
-        tc = ToolCall(id="tc_1", name="inspect_module")
+        tc = ToolCall(id="tc_1", name="Module-inspect")
         assert tc.arguments == {}
 
     def test_equality(self):
@@ -53,10 +53,10 @@ class TestMessage:
         assert msg.tool_results == []
 
     def test_assistant_message_with_tool_calls(self):
-        tc = ToolCall(id="tc_1", name="view_source", arguments={"target": "mutagent"})
+        tc = ToolCall(id="tc_1", name="Module-view_source", arguments={"target": "mutagent"})
         msg = Message(role="assistant", content="", tool_calls=[tc])
         assert len(msg.tool_calls) == 1
-        assert msg.tool_calls[0].name == "view_source"
+        assert msg.tool_calls[0].name == "Module-view_source"
 
     def test_tool_result_message(self):
         tr = ToolResult(tool_call_id="tc_1", content="source code here")
@@ -74,7 +74,7 @@ class TestToolSchema:
 
     def test_creation(self):
         schema = ToolSchema(
-            name="view_source",
+            name="Module-view_source",
             description="View source code.",
             input_schema={
                 "type": "object",
@@ -84,7 +84,7 @@ class TestToolSchema:
                 "required": ["target"],
             },
         )
-        assert schema.name == "view_source"
+        assert schema.name == "Module-view_source"
         assert "properties" in schema.input_schema
 
     def test_default_input_schema(self):
@@ -112,7 +112,7 @@ class TestResponse:
         assert resp.usage == {}
 
     def test_tool_use_response(self):
-        tc = ToolCall(id="tc_1", name="inspect_module", arguments={"module_path": "mutagent"})
+        tc = ToolCall(id="tc_1", name="Module-inspect", arguments={"module_path": "mutagent"})
         msg = Message(role="assistant", tool_calls=[tc])
         resp = Response(message=msg, stop_reason="tool_use")
         assert resp.stop_reason == "tool_use"

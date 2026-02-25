@@ -158,19 +158,19 @@ class TestUserIORenderEvent:
         assert captured.out == "Hello world"
 
     def test_tool_exec_start_with_args(self, userio, capsys):
-        tc = ToolCall(id="tc_1", name="inspect_module", arguments={"module_path": "mutagent"})
+        tc = ToolCall(id="tc_1", name="Module-inspect", arguments={"module_path": "mutagent"})
         event = StreamEvent(type="tool_exec_start", tool_call=tc)
         userio.render_event(event)
         captured = capsys.readouterr()
-        assert "inspect_module" in captured.out
+        assert "Module-inspect" in captured.out
         assert 'module_path="mutagent"' in captured.out
 
     def test_tool_exec_start_no_args(self, userio, capsys):
-        tc = ToolCall(id="tc_1", name="inspect_module", arguments={})
+        tc = ToolCall(id="tc_1", name="Module-inspect", arguments={})
         event = StreamEvent(type="tool_exec_start", tool_call=tc)
         userio.render_event(event)
         captured = capsys.readouterr()
-        assert "inspect_module()" in captured.out
+        assert "Module-inspect()" in captured.out
 
     def test_tool_exec_end(self, userio, capsys):
         tr = ToolResult(tool_call_id="tc_1", content="Success result")

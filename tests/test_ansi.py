@@ -292,13 +292,13 @@ class TestFormatValue:
 class TestFormatToolCall:
 
     def test_no_args(self):
-        result = _format_tool_call("inspect_module", {})
-        assert result == "  inspect_module()"
+        result = _format_tool_call("Module-inspect", {})
+        assert result == "  Module-inspect()"
 
     def test_single_string_arg(self):
-        result = _format_tool_call("inspect_module", {"path": "mutagent.tools"})
+        result = _format_tool_call("Module-inspect", {"path": "mutagent.tools"})
         assert 'path="mutagent.tools"' in result
-        assert "inspect_module(" in result
+        assert "Module-inspect(" in result
 
     def test_single_line_format(self):
         result = _format_tool_call("func", {"a": "x"})
@@ -306,7 +306,7 @@ class TestFormatToolCall:
         assert result == '  func(a="x")'
 
     def test_multi_line_format(self):
-        result = _format_tool_call("define_module", {
+        result = _format_tool_call("Module-define", {
             "path": "mutagent.my_tool",
             "source": "a" * 70,
         })

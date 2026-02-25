@@ -72,6 +72,24 @@ def _make_late_bound(instance: Any, method_name: str):
 
 
 # ---------------------------------------------------------------------------
+# 工具命名
+# ---------------------------------------------------------------------------
+
+def _get_tool_prefix(cls: type) -> str:
+    """从 Toolkit 类名生成工具前缀。去掉 Toolkit 后缀。"""
+    name = cls.__name__
+    if name.endswith("Toolkit") and name != "Toolkit":
+        return name[:-7]  # 去掉 "Toolkit"
+    return name
+
+
+def _get_tool_name(cls: type, method_name: str) -> str:
+    """生成工具名称，格式为 ``{prefix}-{method_name}``。"""
+    prefix = _get_tool_prefix(cls)
+    return f"{prefix}-{method_name}"
+
+
+# ---------------------------------------------------------------------------
 # Auto-discovery
 # ---------------------------------------------------------------------------
 
@@ -97,14 +115,18 @@ def _get_module_name(cls: type) -> str:
 
 
 def _make_entries_for_toolkit(cls: type, instance: Any) -> dict[str, ToolEntry]:
-    """Create ToolEntry dict for a Toolkit class instance (late-bound)."""
+    """Create ToolEntry dict for a Toolkit class instance (late-bound).
+
+    工具名根据类的 tool_prefix 决定：有前缀时使用 ``{prefix}-{method}`` 格式。
+    """
     entries: dict[str, ToolEntry] = {}
     for method_name in _get_public_methods(cls):
+        tool_name = _get_tool_name(cls, method_name)
         late_bound = _make_late_bound(instance, method_name)
         decl_method = get_declaration_method(cls, method_name)
-        schema = make_schema(decl_method, method_name)
-        entries[method_name] = ToolEntry(
-            name=method_name,
+        schema = make_schema(decl_method, tool_name)
+        entries[tool_name] = ToolEntry(
+            name=tool_name,
             callable=late_bound,
             schema=schema,
             source=instance,
@@ -170,16 +192,18 @@ def _refresh_discovered(self: ToolSet) -> None:
             state['version'] = current_version
         else:
             # New class: try to instantiate
-            # Check for name conflicts with manually added tools
+            # Check for tool name conflicts with manually added tools
             public_methods = _get_public_methods(cls)
-            conflicts = [m for m in public_methods if m in entries]
-            if conflicts:
+            tool_name_map = {m: _get_tool_name(cls, m) for m in public_methods}
+            conflict_methods = [m for m in public_methods if tool_name_map[m] in entries]
+            if conflict_methods:
+                conflict_tool_names = [tool_name_map[m] for m in conflict_methods]
                 logger.warning(
-                    "Auto-discovered toolkit %s has methods %s that conflict "
-                    "with pre-registered tools; skipping conflicting methods",
-                    cls.__name__, conflicts,
+                    "Auto-discovered toolkit %s has tools %s that conflict "
+                    "with pre-registered tools; skipping conflicting tools",
+                    cls.__name__, conflict_tool_names,
                 )
-                public_methods = [m for m in public_methods if m not in entries]
+                public_methods = [m for m in public_methods if m not in conflict_methods]
                 if not public_methods:
                     continue
 
@@ -190,12 +214,12 @@ def _refresh_discovered(self: ToolSet) -> None:
                              cls.__name__)
                 continue
 
-            logger.info("Auto-discovered toolkit: %s with methods %s",
-                        cls.__name__, public_methods)
+            logger.info("Auto-discovered toolkit: %s with tools %s",
+                        cls.__name__, [tool_name_map[m] for m in public_methods])
             tk_entries = _make_entries_for_toolkit(cls, instance)
             # Remove conflicting entries
-            for conflict in conflicts:
-                tk_entries.pop(conflict, None)
+            for method in conflict_methods:
+                tk_entries.pop(tool_name_map[method], None)
             discovered[cls] = {
                 'instance': instance,
                 'entries': tk_entries,
@@ -254,12 +278,13 @@ def add(self: ToolSet, source: Any, methods: list[str] | None = None) -> None:
         if method_name not in cls_dict:
             logger.warning("Method %s not found in %s.__dict__, skipping", method_name, cls.__name__)
             continue
+        tool_name = _get_tool_name(cls, method_name)
         bound_method = getattr(source, method_name)
         # Use declaration method for schema (preserves original signature/docstring)
         decl_method = get_declaration_method(cls, method_name)
-        schema = make_schema(decl_method, method_name)
-        entries[method_name] = ToolEntry(
-            name=method_name,
+        schema = make_schema(decl_method, tool_name)
+        entries[tool_name] = ToolEntry(
+            name=tool_name,
             callable=bound_method,
             schema=schema,
             source=source,

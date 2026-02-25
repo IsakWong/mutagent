@@ -88,8 +88,8 @@ class TestParseDocstring:
         assert params["name"] == "The person to greet."
         assert params["count"] == "How many times."
 
-    def test_query_logs_docstring(self):
-        """Test with actual query_logs docstring from essential_tools.py."""
+    def test_query_docstring(self):
+        """Test with actual query docstring from essential_tools.py."""
         doc = """Query log entries or configure logging.
 
         Args:
@@ -213,7 +213,7 @@ class TestGetDeclarationMethod:
         """get_declaration_method returns the original stub, not the @impl replacement."""
         from mutagent.toolkits.module_toolkit import ModuleToolkit
 
-        decl = get_declaration_method(ModuleToolkit, "define_module")
+        decl = get_declaration_method(ModuleToolkit, "define")
         # The declaration method should have the original docstring
         assert decl.__doc__ is not None
         assert "Define or redefine" in decl.__doc__
@@ -232,7 +232,7 @@ class TestGetDeclarationMethod:
         """Declaration method preserves original parameter annotations."""
         from mutagent.toolkits.module_toolkit import ModuleToolkit
 
-        decl = get_declaration_method(ModuleToolkit, "inspect_module")
+        decl = get_declaration_method(ModuleToolkit, "inspect")
         sig = inspect.signature(decl)
         params = list(sig.parameters.keys())
         assert "self" in params
@@ -246,12 +246,12 @@ class TestGetDeclarationMethod:
 
 class TestSchemaForToolkits:
 
-    def test_inspect_module_schema(self):
+    def test_inspect_schema(self):
         from mutagent.toolkits.module_toolkit import ModuleToolkit
-        decl = get_declaration_method(ModuleToolkit, "inspect_module")
-        schema = make_schema(decl, "inspect_module")
+        decl = get_declaration_method(ModuleToolkit, "inspect")
+        schema = make_schema(decl, "Module-inspect")
 
-        assert schema.name == "inspect_module"
+        assert schema.name == "Module-inspect"
         assert "Inspect" in schema.description
         props = schema.input_schema["properties"]
         assert "module_path" in props
@@ -261,23 +261,23 @@ class TestSchemaForToolkits:
         # Both have defaults, so no required params
         assert "required" not in schema.input_schema
 
-    def test_define_module_schema(self):
+    def test_define_schema(self):
         from mutagent.toolkits.module_toolkit import ModuleToolkit
-        decl = get_declaration_method(ModuleToolkit, "define_module")
-        schema = make_schema(decl, "define_module")
+        decl = get_declaration_method(ModuleToolkit, "define")
+        schema = make_schema(decl, "Module-define")
 
-        assert schema.name == "define_module"
+        assert schema.name == "Module-define"
         props = schema.input_schema["properties"]
         assert "module_path" in props
         assert "source" in props
         assert schema.input_schema["required"] == ["module_path", "source"]
 
-    def test_query_logs_schema(self):
+    def test_query_schema(self):
         from mutagent.toolkits.log_toolkit import LogToolkit
-        decl = get_declaration_method(LogToolkit, "query_logs")
-        schema = make_schema(decl, "query_logs")
+        decl = get_declaration_method(LogToolkit, "query")
+        schema = make_schema(decl, "Log-query")
 
-        assert schema.name == "query_logs"
+        assert schema.name == "Log-query"
         props = schema.input_schema["properties"]
         assert len(props) == 4
         assert "pattern" in props
@@ -290,7 +290,7 @@ class TestSchemaForToolkits:
     def test_module_toolkit_methods_have_rich_descriptions(self):
         """All ModuleToolkit methods should have param descriptions from docstrings."""
         from mutagent.toolkits.module_toolkit import ModuleToolkit
-        for method_name in ["inspect_module", "view_source", "define_module", "save_module"]:
+        for method_name in ["inspect", "view_source", "define", "save"]:
             decl = get_declaration_method(ModuleToolkit, method_name)
             schema = make_schema(decl, method_name)
             for pname, prop in schema.input_schema["properties"].items():
@@ -302,9 +302,9 @@ class TestSchemaForToolkits:
     def test_delegate_schema(self):
         from mutagent.toolkits.agent_toolkit import AgentToolkit
         decl = get_declaration_method(AgentToolkit, "delegate")
-        schema = make_schema(decl, "delegate")
+        schema = make_schema(decl, "Agent-delegate")
 
-        assert schema.name == "delegate"
+        assert schema.name == "Agent-delegate"
         assert "Delegate" in schema.description
         props = schema.input_schema["properties"]
         assert "agent_name" in props

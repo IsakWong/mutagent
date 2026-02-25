@@ -1,6 +1,6 @@
-"""mutagent.builtins.inspect_module -- inspect_module tool implementation."""
+"""mutagent.builtins.inspect_module -- inspect tool implementation."""
 
-import inspect
+import inspect as _inspect
 import sys
 import types
 from typing import Any
@@ -15,7 +15,7 @@ def _format_member(name: str, obj: Any, indent: str = "") -> str:
         return f"{indent}class {name}"
     if callable(obj):
         try:
-            sig = inspect.signature(obj)
+            sig = _inspect.signature(obj)
             return f"{indent}def {name}{sig}"
         except (ValueError, TypeError):
             return f"{indent}def {name}(...)"
@@ -33,7 +33,7 @@ def _inspect_module_obj(mod: types.ModuleType, depth: int, current_depth: int = 
     child_indent = "  " * (current_depth + 1)
 
     # List classes and functions defined in this module
-    for name, obj in sorted(inspect.getmembers(mod)):
+    for name, obj in sorted(_inspect.getmembers(mod)):
         if name.startswith("_"):
             continue
         if isinstance(obj, types.ModuleType):
@@ -45,12 +45,12 @@ def _inspect_module_obj(mod: types.ModuleType, depth: int, current_depth: int = 
             if getattr(obj, "__module__", "") == mod.__name__:
                 lines.append(f"{child_indent}class {name}")
                 if current_depth + 1 < depth:
-                    for mname, mobj in sorted(inspect.getmembers(obj)):
+                    for mname, mobj in sorted(_inspect.getmembers(obj)):
                         if mname.startswith("_"):
                             continue
                         if callable(mobj):
                             try:
-                                sig = inspect.signature(mobj)
+                                sig = _inspect.signature(mobj)
                                 lines.append(f"{child_indent}  def {mname}{sig}")
                             except (ValueError, TypeError):
                                 lines.append(f"{child_indent}  def {mname}(...)")
@@ -61,8 +61,8 @@ def _inspect_module_obj(mod: types.ModuleType, depth: int, current_depth: int = 
     return "\n".join(lines)
 
 
-@mutagent.impl(ModuleToolkit.inspect_module)
-def inspect_module(self: ModuleToolkit, module_path: str = "", depth: int = 2) -> str:
+@mutagent.impl(ModuleToolkit.inspect)
+def inspect(self: ModuleToolkit, module_path: str = "", depth: int = 2) -> str:
     """Inspect the structure of a Python module."""
     parts = []
 

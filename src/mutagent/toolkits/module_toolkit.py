@@ -19,7 +19,7 @@ class ModuleToolkit(Toolkit):
 
     module_manager: ModuleManager
 
-    def inspect_module(self, module_path: str = "", depth: int = 2) -> str:
+    def inspect(self, module_path: str = "", depth: int = 2) -> str:
         """Inspect the structure of a Python module.
 
         Args:
@@ -30,7 +30,7 @@ class ModuleToolkit(Toolkit):
         Returns:
             A formatted string showing the module structure.
         """
-        return inspect_module_impl.inspect_module(self, module_path=module_path, depth=depth)
+        return inspect_module_impl.inspect(self, module_path=module_path, depth=depth)
 
     def view_source(self, target: str) -> str:
         """View the source code of a module, class, or function.
@@ -43,11 +43,11 @@ class ModuleToolkit(Toolkit):
         """
         return view_source_impl.view_source(self, target)
 
-    def define_module(self, module_path: str, source: str) -> str:
+    def define(self, module_path: str, source: str) -> str:
         """Define or redefine a Python module in memory.
 
         Injects module code at runtime. The module takes effect immediately
-        in memory but is NOT automatically persisted to disk. Use save_module
+        in memory but is NOT automatically persisted to disk. Use save
         to persist validated modules.
 
         Args:
@@ -58,9 +58,9 @@ class ModuleToolkit(Toolkit):
         Returns:
             A status message indicating success.
         """
-        return define_module_impl.define_module(self, module_path, source)
+        return define_module_impl.define(self, module_path, source)
 
-    def save_module(self, module_path: str, level: str = "project") -> str:
+    def save(self, module_path: str, level: str = "project") -> str:
         """Persist a memory-defined module to disk.
 
         Args:
@@ -72,7 +72,7 @@ class ModuleToolkit(Toolkit):
         Returns:
             A status message with the written file path.
         """
-        return save_module_impl.save_module(self, module_path, level)
+        return save_module_impl.save(self, module_path, level)
 
 
 from mutagent.builtins import (

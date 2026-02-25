@@ -159,7 +159,7 @@ class TestAgentLoop:
             message=Message(
                 role="assistant",
                 content="Let me inspect the module.",
-                tool_calls=[ToolCall(id="tc_1", name="inspect_module", arguments={"module_path": "mutagent"})],
+                tool_calls=[ToolCall(id="tc_1", name="Module-inspect", arguments={"module_path": "mutagent"})],
             ),
             stop_reason="tool_use",
         )
@@ -197,8 +197,8 @@ class TestAgentLoop:
                 role="assistant",
                 content="",
                 tool_calls=[
-                    ToolCall(id="tc_1", name="inspect_module", arguments={"module_path": "mutagent"}),
-                    ToolCall(id="tc_2", name="inspect_module", arguments={"module_path": "mutagent.agent"}),
+                    ToolCall(id="tc_1", name="Module-inspect", arguments={"module_path": "mutagent"}),
+                    ToolCall(id="tc_2", name="Module-inspect", arguments={"module_path": "mutagent.agent"}),
                 ],
             ),
             stop_reason="tool_use",
@@ -252,7 +252,7 @@ class TestAgentLoop:
     def test_handle_tool_calls_dispatches(self, agent):
         """handle_tool_calls dispatches each call through the tool set."""
         calls = [
-            ToolCall(id="tc_1", name="define_module", arguments={"module_path": "test_dispatch.mod", "source": "x = 42\n"}),
+            ToolCall(id="tc_1", name="Module-define", arguments={"module_path": "test_dispatch.mod", "source": "x = 42\n"}),
         ]
         results = agent.handle_tool_calls(calls)
 
@@ -297,7 +297,7 @@ class TestStreamingEventSequence:
             message=Message(
                 role="assistant",
                 content="Thinking...",
-                tool_calls=[ToolCall(id="tc_1", name="define_module", arguments={"module_path": "test_evt.mod", "source": "x=1\n"})],
+                tool_calls=[ToolCall(id="tc_1", name="Module-define", arguments={"module_path": "test_evt.mod", "source": "x=1\n"})],
             ),
             stop_reason="tool_use",
         )
@@ -315,7 +315,7 @@ class TestStreamingEventSequence:
                 yield StreamEvent(type="text_delta", text="Thinking...")
                 yield StreamEvent(
                     type="tool_use_start",
-                    tool_call=ToolCall(id="tc_1", name="define_module"),
+                    tool_call=ToolCall(id="tc_1", name="Module-define"),
                 )
                 yield StreamEvent(type="tool_use_end")
                 yield StreamEvent(type="response_done", response=tool_response)
@@ -342,7 +342,7 @@ class TestStreamingEventSequence:
 
         # Verify tool_exec events carry correct data
         exec_start = events[4]
-        assert exec_start.tool_call.name == "define_module"
+        assert exec_start.tool_call.name == "Module-define"
         exec_end = events[5]
         assert exec_end.tool_result is not None
         assert exec_end.tool_result.tool_call_id == "tc_1"
@@ -492,7 +492,7 @@ class TestStopReasonToolCallsMismatch:
             message=Message(
                 role="assistant",
                 content="Let me check:",
-                tool_calls=[ToolCall(id="tc_1", name="inspect_module", arguments={})],
+                tool_calls=[ToolCall(id="tc_1", name="Module-inspect", arguments={})],
             ),
             stop_reason="end_turn",  # mismatch: should be tool_use
         )
@@ -550,7 +550,7 @@ class TestStopReasonToolCallsMismatch:
             message=Message(
                 role="assistant",
                 content="Inspecting...",
-                tool_calls=[ToolCall(id="tc_1", name="inspect_module", arguments={"module_path": "mutagent"})],
+                tool_calls=[ToolCall(id="tc_1", name="Module-inspect", arguments={"module_path": "mutagent"})],
             ),
             stop_reason="tool_use",
         )
@@ -611,7 +611,7 @@ class TestMaxToolRounds:
                         content=f"Round {idx}",
                         tool_calls=[ToolCall(
                             id=f"tc_{idx}",
-                            name="inspect_module",
+                            name="Module-inspect",
                             arguments={},
                         )],
                     ),

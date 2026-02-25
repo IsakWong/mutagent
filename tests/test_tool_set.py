@@ -61,22 +61,22 @@ class TestToolSetAddFromObject:
         tool_set.add(essential_tools)
         schemas = tool_set.get_tools()
         names = {s.name for s in schemas}
-        assert "inspect_module" in names
-        assert "view_source" in names
-        assert "define_module" in names
-        assert "save_module" in names
+        assert "Module-inspect" in names
+        assert "Module-view_source" in names
+        assert "Module-define" in names
+        assert "Module-save" in names
 
     def test_add_with_methods_filter(self, tool_set, essential_tools):
-        tool_set.add(essential_tools, methods=["inspect_module", "view_source"])
+        tool_set.add(essential_tools, methods=["inspect", "view_source"])
         schemas = tool_set.get_tools()
         names = {s.name for s in schemas}
-        assert names == {"inspect_module", "view_source"}
+        assert names == {"Module-inspect", "Module-view_source"}
 
     def test_add_single_method(self, tool_set, essential_tools):
-        tool_set.add(essential_tools, methods=["define_module"])
+        tool_set.add(essential_tools, methods=["define"])
         schemas = tool_set.get_tools()
         assert len(schemas) == 1
-        assert schemas[0].name == "define_module"
+        assert schemas[0].name == "Module-define"
 
 
 class TestToolSetAddCallable:
@@ -106,17 +106,17 @@ class TestToolSetRemove:
         mgr.cleanup()
 
     def test_remove_existing(self, populated_set):
-        assert populated_set.remove("inspect_module") is True
+        assert populated_set.remove("Module-inspect") is True
         names = {s.name for s in populated_set.get_tools()}
-        assert "inspect_module" not in names
+        assert "Module-inspect" not in names
 
     def test_remove_nonexistent(self, populated_set):
         assert populated_set.remove("nonexistent_tool") is False
 
     def test_remove_then_dispatch_fails(self, populated_set):
-        populated_set.remove("inspect_module")
+        populated_set.remove("Module-inspect")
         result = populated_set.dispatch(
-            ToolCall(id="tc_1", name="inspect_module", arguments={})
+            ToolCall(id="tc_1", name="Module-inspect", arguments={})
         )
         assert result.is_error
         assert "Unknown tool" in result.content
@@ -134,9 +134,9 @@ class TestToolSetQuery:
         mgr.cleanup()
 
     def test_query_existing(self, populated_set):
-        schema = populated_set.query("inspect_module")
+        schema = populated_set.query("Module-inspect")
         assert schema is not None
-        assert schema.name == "inspect_module"
+        assert schema.name == "Module-inspect"
         assert isinstance(schema, ToolSchema)
 
     def test_query_nonexistent(self, populated_set):
@@ -154,16 +154,16 @@ class TestToolSetDispatch:
         yield ts
         mgr.cleanup()
 
-    def test_dispatch_inspect_module(self, tool_set):
+    def test_dispatch_inspect(self, tool_set):
         result = tool_set.dispatch(
-            ToolCall(id="tc_1", name="inspect_module", arguments={"module_path": "mutagent"})
+            ToolCall(id="tc_1", name="Module-inspect", arguments={"module_path": "mutagent"})
         )
         assert not result.is_error
         assert "mutagent" in result.content
 
-    def test_dispatch_define_module(self, tool_set):
+    def test_dispatch_define(self, tool_set):
         result = tool_set.dispatch(
-            ToolCall(id="tc_2", name="define_module",
+            ToolCall(id="tc_2", name="Module-define",
                      arguments={"module_path": "test_ts_dispatch.mod", "source": "x = 42\n"})
         )
         assert not result.is_error
@@ -178,10 +178,10 @@ class TestToolSetDispatch:
 
     def test_dispatch_with_error(self, tool_set):
         result = tool_set.dispatch(
-            ToolCall(id="tc_4", name="save_module",
+            ToolCall(id="tc_4", name="Module-save",
                      arguments={"module_path": "nonexistent.mod"})
         )
-        # save_module for unpatched module returns error string, not exception
+        # save for unpatched module returns error string, not exception
         assert "Error" in result.content
 
 
@@ -213,12 +213,12 @@ class TestToolSetMultipleSources:
             return str(x * 2)
 
         ts = ToolSet()
-        ts.add(tools, methods=["inspect_module"])
+        ts.add(tools, methods=["inspect"])
         ts.add(custom_tool)
 
         schemas = ts.get_tools()
         names = {s.name for s in schemas}
-        assert "inspect_module" in names
+        assert "Module-inspect" in names
         assert "custom_tool" in names
         mgr.cleanup()
 
@@ -322,7 +322,7 @@ class TestAgentToolkitDelegate:
         # Sub-agent's ToolSet has no delegate tool
         sub_tools = sub.tool_set.get_tools()
         tool_names = {t.name for t in sub_tools}
-        assert "delegate" not in tool_names
+        assert "Agent-delegate" not in tool_names
 
 
 class TestAgentToolkitRegistration:
@@ -337,11 +337,11 @@ class TestAgentToolkitRegistration:
 
         schemas = ts.get_tools()
         assert len(schemas) == 1
-        assert schemas[0].name == "delegate"
+        assert schemas[0].name == "Agent-delegate"
 
         # Dispatch through ToolSet
         result = ts.dispatch(
-            ToolCall(id="tc_1", name="delegate",
+            ToolCall(id="tc_1", name="Agent-delegate",
                      arguments={"agent_name": "helper", "task": "Do something"})
         )
         assert not result.is_error
@@ -379,8 +379,8 @@ class TestSystemAgentWithDelegate:
 
         # Verify system agent has both essential tools and delegate
         tool_names = {s.name for s in system_ts.get_tools()}
-        assert "inspect_module" in tool_names
-        assert "delegate" in tool_names
+        assert "Module-inspect" in tool_names
+        assert "Agent-delegate" in tool_names
 
         # Simulate: LLM calls delegate tool
         tool_response = Response(
@@ -388,7 +388,7 @@ class TestSystemAgentWithDelegate:
                 role="assistant",
                 content="Delegating...",
                 tool_calls=[ToolCall(
-                    id="tc_1", name="delegate",
+                    id="tc_1", name="Agent-delegate",
                     arguments={"agent_name": "worker", "task": "Do the work"},
                 )],
             ),
@@ -452,7 +452,7 @@ class TestToolSetAutoDiscover:
         return ts
 
     def test_auto_discover_finds_new_toolkit(self, tool_set, mgr):
-        """define_module creating a Toolkit subclass → auto-discovered."""
+        """define creating a Toolkit subclass → auto-discovered."""
         mgr.patch_module("test_discover.tools", (
             "import mutagent\n"
             "\n"
@@ -466,7 +466,7 @@ class TestToolSetAutoDiscover:
         ))
         schemas = tool_set.get_tools()
         names = {s.name for s in schemas}
-        assert "greet" in names
+        assert "Greeter-greet" in names
 
     def test_auto_discover_private_methods_excluded(self, tool_set, mgr):
         """Methods starting with _ should not be discovered."""
@@ -482,8 +482,9 @@ class TestToolSetAutoDiscover:
         ))
         schemas = tool_set.get_tools()
         names = {s.name for s in schemas}
-        assert "public_tool" in names
+        assert "WithPrivate-public_tool" in names
         assert "_helper" not in names
+        assert "WithPrivate-_helper" not in names
 
     def test_auto_discover_dispatch_works(self, tool_set, mgr):
         """Auto-discovered tools can be dispatched."""
@@ -500,7 +501,7 @@ class TestToolSetAutoDiscover:
             "        return str(a + b)\n"
         ))
         result = tool_set.dispatch(
-            ToolCall(id="tc_1", name="add_numbers", arguments={"a": 3, "b": 4})
+            ToolCall(id="tc_1", name="Calculator-add_numbers", arguments={"a": 3, "b": 4})
         )
         assert not result.is_error
         assert "7" in result.content
@@ -509,7 +510,7 @@ class TestToolSetAutoDiscover:
         """Classes added via add() should be skipped by auto-discovery."""
         schemas = tool_set.get_tools()
         # ModuleToolkit was add()'d, its methods should appear exactly once
-        count = sum(1 for s in schemas if s.name == "inspect_module")
+        count = sum(1 for s in schemas if s.name == "Module-inspect")
         assert count == 1
 
     def test_name_conflict_preserves_pre_registered(self, tool_set, mgr):
@@ -523,13 +524,14 @@ class TestToolSetAutoDiscover:
             "        return 'CONFLICT'\n"
         ))
         # Dispatch should use the pre-registered one, not the auto-discovered
+        # Conflicting generates "Conflicting-inspect_module" which doesn't
+        # conflict with "Module-inspect", so both should exist
         result = tool_set.dispatch(
-            ToolCall(id="tc_1", name="inspect_module",
+            ToolCall(id="tc_1", name="Module-inspect",
                      arguments={"module_path": "mutagent"})
         )
         assert not result.is_error
         assert "mutagent" in result.content
-        assert "CONFLICT" not in result.content
 
     def test_complex_ctor_skipped(self, tool_set, mgr):
         """Toolkit subclass that needs constructor args is skipped."""
@@ -587,12 +589,12 @@ class TestToolSetAutoDiscover:
         ))
         schemas = tool_set.get_tools()
         names = {s.name for s in schemas}
-        assert "tool_alpha" in names
-        assert "tool_beta" in names
+        assert "ToolsA-tool_alpha" in names
+        assert "ToolsB-tool_beta" in names
 
 
 class TestToolSetLateBind:
-    """Tests for late binding: define_module updates reflected immediately."""
+    """Tests for late binding: define updates reflected immediately."""
 
     @pytest.fixture
     def mgr(self):
@@ -619,7 +621,7 @@ class TestToolSetLateBind:
         ))
         # First call: x * 2
         result = tool_set.dispatch(
-            ToolCall(id="tc_1", name="compute", arguments={"x": 5})
+            ToolCall(id="tc_1", name="MyTools-compute", arguments={"x": 5})
         )
         assert result.content == "10"
 
@@ -634,7 +636,7 @@ class TestToolSetLateBind:
         ))
         # Second call should use new code (via late binding)
         result = tool_set.dispatch(
-            ToolCall(id="tc_2", name="compute", arguments={"x": 5})
+            ToolCall(id="tc_2", name="MyTools-compute", arguments={"x": 5})
         )
         assert result.content == "15"
 
@@ -650,8 +652,8 @@ class TestToolSetLateBind:
         ))
         schemas = tool_set.get_tools()
         names = {s.name for s in schemas}
-        assert "tool_v1" in names
-        assert "tool_v2" not in names
+        assert "Evolving-tool_v1" in names
+        assert "Evolving-tool_v2" not in names
 
         # Add a new method
         mgr.patch_module("test_late.evolve", (
@@ -667,8 +669,8 @@ class TestToolSetLateBind:
         ))
         schemas = tool_set.get_tools()
         names = {s.name for s in schemas}
-        assert "tool_v1" in names
-        assert "tool_v2" in names
+        assert "Evolving-tool_v1" in names
+        assert "Evolving-tool_v2" in names
 
     def test_remove_method_reflected_after_redefine(self, tool_set, mgr):
         """Removing a method from a Toolkit is reflected."""
@@ -685,8 +687,8 @@ class TestToolSetLateBind:
         ))
         schemas = tool_set.get_tools()
         names = {s.name for s in schemas}
-        assert "keep" in names
-        assert "remove_me" in names
+        assert "Shrinking-keep" in names
+        assert "Shrinking-remove_me" in names
 
         # Redefine without remove_me
         mgr.patch_module("test_late.shrink", (
@@ -699,8 +701,8 @@ class TestToolSetLateBind:
         ))
         schemas = tool_set.get_tools()
         names = {s.name for s in schemas}
-        assert "keep" in names
-        assert "remove_me" not in names
+        assert "Shrinking-keep" in names
+        assert "Shrinking-remove_me" not in names
 
     def test_full_iteration_cycle(self, tool_set, mgr):
         """Full cycle: define → discover → call → redefine → call → verify."""
@@ -716,7 +718,7 @@ class TestToolSetLateBind:
 
         # Step 2: Discover + call
         result = tool_set.dispatch(
-            ToolCall(id="tc_1", name="process", arguments={"data": "hello"})
+            ToolCall(id="tc_1", name="CycleTool-process", arguments={"data": "hello"})
         )
         assert result.content == "HELLO"
 
@@ -732,6 +734,240 @@ class TestToolSetLateBind:
 
         # Step 4: Call again — should use new code
         result = tool_set.dispatch(
-            ToolCall(id="tc_2", name="process", arguments={"data": "hello"})
+            ToolCall(id="tc_2", name="CycleTool-process", arguments={"data": "hello"})
         )
         assert result.content == "olleh"
+
+
+# ---------------------------------------------------------------------------
+# Tool Naming Convention Tests
+# ---------------------------------------------------------------------------
+
+class TestToolNamingConvention:
+    """工具名格式为 '{Prefix}-{method}'，前缀从类名自动推导。"""
+
+    def test_toolkit_suffix_stripped(self):
+        """类名以 Toolkit 结尾时，去掉该后缀作为前缀。"""
+        class WebToolkit(mutagent.Toolkit):
+            def search(self, query: str) -> str:
+                """Search the web."""
+                return f"results for {query}"
+
+            def fetch(self, url: str) -> str:
+                """Fetch a URL."""
+                return f"content of {url}"
+
+        ts = ToolSet()
+        ts.add(WebToolkit())
+        names = {s.name for s in ts.get_tools()}
+        assert names == {"Web-search", "Web-fetch"}
+
+    def test_class_name_without_toolkit_suffix(self):
+        """类名不以 Toolkit 结尾时，使用完整类名作为前缀。"""
+        class Greeter(mutagent.Toolkit):
+            def say_hello(self) -> str:
+                """Say hello."""
+                return "hello"
+
+        ts = ToolSet()
+        ts.add(Greeter())
+        names = {s.name for s in ts.get_tools()}
+        assert names == {"Greeter-say_hello"}
+
+    def test_dispatch_uses_prefixed_name(self):
+        """dispatch() 必须使用前缀工具名。"""
+        class WebToolkit(mutagent.Toolkit):
+            def search(self, query: str) -> str:
+                """Search the web."""
+                return f"found: {query}"
+
+        ts = ToolSet()
+        ts.add(WebToolkit())
+        result = ts.dispatch(
+            ToolCall(id="tc_1", name="Web-search", arguments={"query": "python"})
+        )
+        assert not result.is_error
+        assert "found: python" in result.content
+
+    def test_bare_method_name_dispatch_fails(self):
+        """使用不带前缀的方法名 dispatch 会失败。"""
+        class WebToolkit(mutagent.Toolkit):
+            def search(self, query: str) -> str:
+                """Search the web."""
+                return "results"
+
+        ts = ToolSet()
+        ts.add(WebToolkit())
+        result = ts.dispatch(
+            ToolCall(id="tc_1", name="search", arguments={"query": "test"})
+        )
+        assert result.is_error
+        assert "Unknown tool" in result.content
+
+    def test_query_uses_prefixed_name(self):
+        """query() 使用前缀工具名。"""
+        class SessionToolkit(mutagent.Toolkit):
+            def create(self, session_type: str) -> str:
+                """Create a session."""
+                return "created"
+
+        ts = ToolSet()
+        ts.add(SessionToolkit())
+        schema = ts.query("Session-create")
+        assert schema is not None
+        assert schema.name == "Session-create"
+        assert ts.query("create") is None
+
+    def test_schema_name_is_prefixed(self):
+        """ToolSchema.name 使用前缀格式。"""
+        class WebToolkit(mutagent.Toolkit):
+            def search(self, query: str) -> str:
+                """Search the web.
+
+                Args:
+                    query: Search query.
+                """
+                return "results"
+
+        ts = ToolSet()
+        ts.add(WebToolkit())
+        schema = ts.query("Web-search")
+        assert schema is not None
+        assert schema.name == "Web-search"
+        assert "Search the web" in schema.description
+        assert "query" in schema.input_schema["properties"]
+
+    def test_remove_uses_prefixed_name(self):
+        """remove() 使用前缀工具名。"""
+        class WebToolkit(mutagent.Toolkit):
+            def search(self, query: str) -> str:
+                """Search."""
+                return "results"
+
+            def fetch(self, url: str) -> str:
+                """Fetch."""
+                return "content"
+
+        ts = ToolSet()
+        ts.add(WebToolkit())
+        assert ts.remove("Web-search") is True
+        names = {s.name for s in ts.get_tools()}
+        assert names == {"Web-fetch"}
+
+    def test_methods_filter_uses_method_names(self):
+        """add(methods=[...]) 过滤参数使用方法名，注册结果使用前缀工具名。"""
+        class WebToolkit(mutagent.Toolkit):
+            def search(self, query: str) -> str:
+                """Search."""
+                return "results"
+
+            def fetch(self, url: str) -> str:
+                """Fetch."""
+                return "content"
+
+        ts = ToolSet()
+        ts.add(WebToolkit(), methods=["search"])
+        schemas = ts.get_tools()
+        assert len(schemas) == 1
+        assert schemas[0].name == "Web-search"
+
+    def test_existing_toolkits_get_prefixed(self):
+        """现有 Toolkit 也使用前缀命名。"""
+        mgr = ModuleManager()
+        module_tools = ModuleToolkit(module_manager=mgr)
+
+        ts = ToolSet()
+        ts.add(module_tools, methods=["inspect"])
+
+        schemas = ts.get_tools()
+        names = {s.name for s in schemas}
+        assert "Module-inspect" in names
+        mgr.cleanup()
+
+
+class TestToolNamingAutoDiscover:
+    """前缀命名与 auto-discovery 的集成测试。"""
+
+    @pytest.fixture
+    def mgr(self):
+        mgr = ModuleManager()
+        yield mgr
+        mgr.cleanup()
+
+    @pytest.fixture
+    def tool_set(self, mgr):
+        tools = ModuleToolkit(module_manager=mgr)
+        ts = ToolSet(auto_discover=True)
+        ts.add(tools)
+        return ts
+
+    def test_auto_discover_toolkit_suffix_stripped(self, tool_set, mgr):
+        """auto-discovery: 类名以 Toolkit 结尾时去掉后缀。"""
+        mgr.patch_module("test_naming.web_discover", (
+            "import mutagent\n"
+            "\n"
+            "class WebDiscoverToolkit(mutagent.Toolkit):\n"
+            "\n"
+            "    def web_search(self, query: str) -> str:\n"
+            "        '''Search the web.\n\n"
+            "        Args:\n"
+            "            query: Search query.\n"
+            "        '''\n"
+            "        return f'found: {query}'\n"
+        ))
+        schemas = tool_set.get_tools()
+        names = {s.name for s in schemas}
+        assert "WebDiscover-web_search" in names
+
+        result = tool_set.dispatch(
+            ToolCall(id="tc_1", name="WebDiscover-web_search", arguments={"query": "test"})
+        )
+        assert not result.is_error
+        assert "found: test" in result.content
+
+    def test_auto_discover_prefixed_no_conflict(self, tool_set, mgr):
+        """不同前缀的同名方法不冲突。"""
+        mgr.patch_module("test_naming.noconflict", (
+            "import mutagent\n"
+            "\n"
+            "class InspectToolkit(mutagent.Toolkit):\n"
+            "\n"
+            "    def inspect_module(self) -> str:\n"
+            "        '''Inspect something.'''\n"
+            "        return 'prefixed inspect'\n"
+        ))
+        schemas = tool_set.get_tools()
+        names = {s.name for s in schemas}
+        # Module-inspect (pre-registered) 和 Inspect-inspect_module 共存
+        assert "Module-inspect" in names
+        assert "Inspect-inspect_module" in names
+
+    def test_auto_discover_late_binding_with_prefix(self, tool_set, mgr):
+        """auto-discovered 前缀工具支持 late binding。"""
+        mgr.patch_module("test_naming.late", (
+            "import mutagent\n"
+            "\n"
+            "class CalcToolkit(mutagent.Toolkit):\n"
+            "\n"
+            "    def compute(self, x: int) -> str:\n"
+            "        '''Compute.'''\n"
+            "        return str(x * 2)\n"
+        ))
+        result = tool_set.dispatch(
+            ToolCall(id="tc_1", name="Calc-compute", arguments={"x": 5})
+        )
+        assert result.content == "10"
+
+        mgr.patch_module("test_naming.late", (
+            "import mutagent\n"
+            "\n"
+            "class CalcToolkit(mutagent.Toolkit):\n"
+            "\n"
+            "    def compute(self, x: int) -> str:\n"
+            "        '''Compute.'''\n"
+            "        return str(x * 3)\n"
+        ))
+        result = tool_set.dispatch(
+            ToolCall(id="tc_2", name="Calc-compute", arguments={"x": 5})
+        )
+        assert result.content == "15"

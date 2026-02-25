@@ -104,7 +104,7 @@ class TestSaveModuleConfig:
             "        return 'hi'\n"
         )
         tools.module_manager.patch_module("save_tk_test", source)
-        result = tools.save_module("save_tk_test")
+        result = tools.save("save_tk_test")
         assert "OK" in result
 
         config_path = tmp_path / ".mutagent" / "config.json"
@@ -114,7 +114,7 @@ class TestSaveModuleConfig:
 
     def test_non_toolkit_module_not_added(self, tools, tmp_path):
         tools.module_manager.patch_module("plain_mod", "val = 99\n")
-        result = tools.save_module("plain_mod")
+        result = tools.save("plain_mod")
         assert "OK" in result
 
         config_path = tmp_path / ".mutagent" / "config.json"
@@ -130,10 +130,10 @@ class TestSaveModuleConfig:
             "        return 'pong'\n"
         )
         tools.module_manager.patch_module("dup_tk", source)
-        tools.save_module("dup_tk")
+        tools.save("dup_tk")
         # Save again (re-patch to bump version so save_module succeeds)
         tools.module_manager.patch_module("dup_tk", source)
-        tools.save_module("dup_tk")
+        tools.save("dup_tk")
 
         config_path = tmp_path / ".mutagent" / "config.json"
         data = json.loads(config_path.read_text(encoding="utf-8"))
@@ -157,7 +157,7 @@ class TestSaveModuleConfig:
             "        return ''\n"
         )
         tools.module_manager.patch_module("preserve_tk", source)
-        tools.save_module("preserve_tk")
+        tools.save("preserve_tk")
 
         data = json.loads(config_path.read_text(encoding="utf-8"))
         assert data["default_model"] == "main"
@@ -174,7 +174,7 @@ class TestSaveModuleConfig:
             "        return 'hello'\n"
         )
         tools.module_manager.patch_module("user_tk", source)
-        result = tools.save_module("user_tk", level="user")
+        result = tools.save("user_tk", level="user")
         assert "OK" in result
 
         config_path = tmp_path / ".mutagent" / "config.json"
@@ -194,7 +194,7 @@ class TestSaveModuleConfig:
             "        return 'x'\n"
         )
         tools.module_manager.patch_module("mal_tk", source)
-        result = tools.save_module("mal_tk")
+        result = tools.save("mal_tk")
         assert "OK" in result
 
         data = json.loads(

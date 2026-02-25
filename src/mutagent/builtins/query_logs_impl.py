@@ -8,8 +8,8 @@ import mutagent
 from mutagent.toolkits.log_toolkit import LogToolkit
 
 
-@mutagent.impl(LogToolkit.query_logs)
-def query_logs(
+@mutagent.impl(LogToolkit.query)
+def query(
     self: LogToolkit,
     pattern: str = "",
     level: str = "DEBUG",

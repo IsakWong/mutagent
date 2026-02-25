@@ -273,52 +273,52 @@ class TestQueryLogsTool:
         mgr.cleanup()
 
     def test_query_no_logs(self, tools):
-        result = tools.query_logs()
+        result = tools.query()
         assert "Total entries: 0" in result
         assert "no matching entries" in result
 
     def test_query_with_entries(self, tools):
         tools.log_store.append(LogEntry(time.time(), "INFO", "test", "hello world"))
-        result = tools.query_logs()
+        result = tools.query()
         assert "hello world" in result
         assert "Total entries: 1" in result
 
     def test_query_pattern_filter(self, tools):
         tools.log_store.append(LogEntry(time.time(), "INFO", "a", "foo bar"))
         tools.log_store.append(LogEntry(time.time(), "INFO", "b", "baz qux"))
-        result = tools.query_logs(pattern="foo")
+        result = tools.query(pattern="foo")
         assert "foo bar" in result
         assert "baz qux" not in result
 
     def test_query_level_filter(self, tools):
         tools.log_store.append(LogEntry(time.time(), "DEBUG", "a", "debug msg"))
         tools.log_store.append(LogEntry(time.time(), "ERROR", "b", "error msg"))
-        result = tools.query_logs(level="ERROR")
+        result = tools.query(level="ERROR")
         assert "error msg" in result
         assert "debug msg" not in result
 
     def test_tool_capture_on_off(self, tools):
         assert tools.log_store.tool_capture_enabled is False
 
-        result = tools.query_logs(tool_capture="on")
+        result = tools.query(tool_capture="on")
         assert "Tool capture: on" in result
         assert tools.log_store.tool_capture_enabled is True
 
-        result = tools.query_logs(tool_capture="off")
+        result = tools.query(tool_capture="off")
         assert "Tool capture: off" in result
         assert tools.log_store.tool_capture_enabled is False
 
     def test_query_limit(self, tools):
         for i in range(20):
             tools.log_store.append(LogEntry(float(i), "INFO", "test", f"msg {i}"))
-        result = tools.query_logs(limit=3)
+        result = tools.query(limit=3)
         assert "showing 3 of 20" in result
 
     def test_query_shows_version_in_output(self, tools):
         tools.log_store.append(
             LogEntry(time.time(), "INFO", "mutagent.tools", "Module x defined (v2)")
         )
-        result = tools.query_logs(pattern="Module x")
+        result = tools.query(pattern="Module x")
         assert "Module x defined (v2)" in result
 
 

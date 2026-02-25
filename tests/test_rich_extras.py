@@ -334,19 +334,19 @@ class TestRichRenderEvent:
         assert 'world' in output
 
     def test_tool_exec_start(self, userio):
-        tc = ToolCall(id="tc_1", name="inspect_module", arguments={"module_path": "mutagent"})
+        tc = ToolCall(id="tc_1", name="Module-inspect", arguments={"module_path": "mutagent"})
         event = StreamEvent(type="tool_exec_start", tool_call=tc)
         userio.render_event(event)
         output = self._output(userio)
-        assert 'inspect_module' in output
+        assert 'Module-inspect' in output
         assert 'module_path=mutagent' in output
 
     def test_tool_exec_start_no_args(self, userio):
-        tc = ToolCall(id="tc_1", name="inspect_module", arguments={})
+        tc = ToolCall(id="tc_1", name="Module-inspect", arguments={})
         event = StreamEvent(type="tool_exec_start", tool_call=tc)
         userio.render_event(event)
         output = self._output(userio)
-        assert 'inspect_module' in output
+        assert 'Module-inspect' in output
 
     def test_tool_exec_end_ok(self, userio):
         tr = ToolResult(tool_call_id="tc_1", content="Success result")

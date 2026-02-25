@@ -257,9 +257,9 @@ class TestLoadToStore:
 # ---------------------------------------------------------------------------
 
 API_CONTENT = """\
-{"type":"session","ts":"2026-02-17T00:59:24Z","model":"test-model","system_prompt":"You are test","tools":[{"name":"define_module"}]}
+{"type":"session","ts":"2026-02-17T00:59:24Z","model":"test-model","system_prompt":"You are test","tools":[{"name":"Module-define"}]}
 {"type":"call","ts":"2026-02-17T00:59:32Z","input":{"role":"user","content":"hello"},"response":{"content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn"},"usage":{"input_tokens":10,"output_tokens":5},"duration_ms":100}
-{"type":"call","ts":"2026-02-17T00:59:35Z","input":{"role":"user","content":"define it"},"response":{"content":[{"type":"tool_use","name":"define_module","input":{"source":"x=1"}}],"stop_reason":"tool_use"},"usage":{"input_tokens":20,"output_tokens":10},"duration_ms":200}
+{"type":"call","ts":"2026-02-17T00:59:35Z","input":{"role":"user","content":"define it"},"response":{"content":[{"type":"tool_use","name":"Module-define","input":{"source":"x=1"}}],"stop_reason":"tool_use"},"usage":{"input_tokens":20,"output_tokens":10},"duration_ms":200}
 """
 
 
@@ -283,11 +283,11 @@ class TestQueryApi:
         assert results[0].type == "call"
 
     def test_query_by_tool_name(self, engine):
-        results = engine.query_api(session="20260217_085924", tool_name="define_module", limit=100)
-        # Should match session (has define_module in tools) and call #2 (uses define_module)
+        results = engine.query_api(session="20260217_085924", tool_name="Module-define", limit=100)
+        # Should match session (has Module-define in tools) and call #2 (uses Module-define)
         assert len(results) >= 1
         # At least the tool_use call should match
-        tool_use_calls = [r for r in results if r.type == "call" and "define_module" in json.dumps(r.data)]
+        tool_use_calls = [r for r in results if r.type == "call" and "Module-define" in json.dumps(r.data)]
         assert len(tool_use_calls) >= 1
 
     def test_query_by_pattern(self, engine):
@@ -441,10 +441,10 @@ class TestCLI:
 
 # A richer API JSONL with tool_use → tool_result across records
 API_TOOLS_CONTENT = """\
-{"type":"session","ts":"2026-02-17T00:59:24Z","model":"test-model","tools":[{"name":"inspect_module"},{"name":"define_module"}]}
-{"type":"call","ts":"2026-02-17T00:59:32Z","input":{"role":"user","content":"check modules"},"response":{"content":[{"type":"tool_use","id":"tu_1","name":"inspect_module","input":{"module_path":"","depth":2}}],"stop_reason":"tool_use"},"usage":{"input_tokens":100,"output_tokens":20},"duration_ms":1000}
-{"type":"call","ts":"2026-02-17T00:59:34Z","input":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"mutagent/\\n  agent/\\n  tools/"}]},"response":{"content":[{"type":"tool_use","id":"tu_2","name":"define_module","input":{"module_path":"my_mod","source":"import os\\ndef hello():\\n    return 'hi'\\n"}}],"stop_reason":"tool_use"},"usage":{"input_tokens":200,"output_tokens":30},"duration_ms":1500}
-{"type":"call","ts":"2026-02-17T00:59:37Z","input":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_2","is_error":true,"content":"SyntaxError: invalid syntax line 3"}]},"response":{"content":[{"type":"tool_use","id":"tu_3","name":"define_module","input":{"module_path":"my_mod","source":"import os\\ndef hello():\\n    return 'hi'"}}],"stop_reason":"tool_use"},"usage":{"input_tokens":300,"output_tokens":30},"duration_ms":2000}
+{"type":"session","ts":"2026-02-17T00:59:24Z","model":"test-model","tools":[{"name":"Module-inspect"},{"name":"Module-define"}]}
+{"type":"call","ts":"2026-02-17T00:59:32Z","input":{"role":"user","content":"check modules"},"response":{"content":[{"type":"tool_use","id":"tu_1","name":"Module-inspect","input":{"module_path":"","depth":2}}],"stop_reason":"tool_use"},"usage":{"input_tokens":100,"output_tokens":20},"duration_ms":1000}
+{"type":"call","ts":"2026-02-17T00:59:34Z","input":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"mutagent/\\n  agent/\\n  tools/"}]},"response":{"content":[{"type":"tool_use","id":"tu_2","name":"Module-define","input":{"module_path":"my_mod","source":"import os\\ndef hello():\\n    return 'hi'\\n"}}],"stop_reason":"tool_use"},"usage":{"input_tokens":200,"output_tokens":30},"duration_ms":1500}
+{"type":"call","ts":"2026-02-17T00:59:37Z","input":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_2","is_error":true,"content":"SyntaxError: invalid syntax line 3"}]},"response":{"content":[{"type":"tool_use","id":"tu_3","name":"Module-define","input":{"module_path":"my_mod","source":"import os\\ndef hello():\\n    return 'hi'"}}],"stop_reason":"tool_use"},"usage":{"input_tokens":300,"output_tokens":30},"duration_ms":2000}
 {"type":"call","ts":"2026-02-17T00:59:40Z","input":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_3","content":"Module defined: my_mod"}]},"response":{"content":[{"type":"text","text":"Done!"}],"stop_reason":"end_turn"},"usage":{"input_tokens":400,"output_tokens":10},"duration_ms":500}
 """
 
@@ -463,9 +463,9 @@ class TestQueryTools:
     def test_basic_extraction(self, engine):
         results = engine.query_tools(session="20260217_085924")
         assert len(results) == 3
-        assert results[0].tool_name == "inspect_module"
-        assert results[1].tool_name == "define_module"
-        assert results[2].tool_name == "define_module"
+        assert results[0].tool_name == "Module-inspect"
+        assert results[1].tool_name == "Module-define"
+        assert results[2].tool_name == "Module-define"
 
     def test_sequential_numbering(self, engine):
         results = engine.query_tools(session="20260217_085924")
@@ -492,15 +492,15 @@ class TestQueryTools:
         assert "SyntaxError" in results[1].result_summary
 
     def test_filter_by_tool_name(self, engine):
-        results = engine.query_tools(session="20260217_085924", tool_name="define_module")
+        results = engine.query_tools(session="20260217_085924", tool_name="Module-define")
         assert len(results) == 2
-        assert all(tc.tool_name == "define_module" for tc in results)
+        assert all(tc.tool_name == "Module-define" for tc in results)
 
     def test_filter_errors_only(self, engine):
         results = engine.query_tools(session="20260217_085924", errors_only=True)
         assert len(results) == 1
         assert results[0].is_error is True
-        assert results[0].tool_name == "define_module"
+        assert results[0].tool_name == "Module-define"
 
     def test_limit(self, engine):
         results = engine.query_tools(session="20260217_085924", limit=2)
@@ -508,7 +508,7 @@ class TestQueryTools:
 
     def test_input_summary(self, engine):
         results = engine.query_tools(session="20260217_085924")
-        # First tool: inspect_module with module_path and depth
+        # First tool: inspect with module_path and depth
         assert 'module_path=""' in results[0].input_summary
         assert "depth=2" in results[0].input_summary
 
@@ -606,12 +606,12 @@ class TestMakeVerboseLines:
         data = {"response": {
             "stop_reason": "tool_use",
             "content": [
-                {"type": "tool_use", "id": "x", "name": "inspect_module", "input": {"module_path": "foo"}},
+                {"type": "tool_use", "id": "x", "name": "Module-inspect", "input": {"module_path": "foo"}},
             ],
         }}
         lines = _make_verbose_lines(data)
         assert len(lines) == 1
-        assert "inspect_module" in lines[0]
+        assert "Module-inspect" in lines[0]
         assert 'module_path="foo"' in lines[0]
 
     def test_non_tool_use_response(self):
@@ -626,7 +626,7 @@ class TestMakeVerboseLines:
 class TestApiSummaryToolResult:
 
     def test_tool_result_annotated_with_name(self):
-        prev_map = {"tu_1": "inspect_module"}
+        prev_map = {"tu_1": "Module-inspect"}
         data = {
             "type": "call",
             "input": {"role": "user", "content": [
@@ -635,10 +635,10 @@ class TestApiSummaryToolResult:
             "response": {"content": [{"type": "text", "text": "done"}], "stop_reason": "end_turn"},
         }
         summary = _make_api_summary(data, prev_map)
-        assert "tool_result:inspect_module" in summary
+        assert "tool_result:Module-inspect" in summary
 
     def test_tool_result_error_annotated(self):
-        prev_map = {"tu_2": "define_module"}
+        prev_map = {"tu_2": "Module-define"}
         data = {
             "type": "call",
             "input": {"role": "user", "content": [
@@ -647,7 +647,7 @@ class TestApiSummaryToolResult:
             "response": {"content": [{"type": "text", "text": "retrying"}], "stop_reason": "end_turn"},
         }
         summary = _make_api_summary(data, prev_map)
-        assert "define_module:error" in summary
+        assert "Module-define:error" in summary
 
     def test_multiple_tool_results(self):
         prev_map = {"tu_a": "foo", "tu_b": "bar"}
@@ -725,7 +725,7 @@ class TestApiVerbose:
         # Call #1 (index 1) has tool_use → should have verbose lines
         call_1 = results[1]
         assert len(call_1.verbose_lines) == 1
-        assert "inspect_module" in call_1.verbose_lines[0]
+        assert "Module-inspect" in call_1.verbose_lines[0]
 
     def test_non_verbose_has_no_lines(self, engine):
         results = engine.query_api(session="20260217_085924", verbose=False, limit=100)
@@ -749,8 +749,8 @@ class TestCLITools:
         (tmp_path / "20260217_085924-api.jsonl").write_text(API_TOOLS_CONTENT, encoding="utf-8")
         cli_main(["--dir", str(tmp_path), "tools", "-s", "20260217_085924"])
         output = capsys.readouterr().out
-        assert "inspect_module" in output
-        assert "define_module" in output
+        assert "Module-inspect" in output
+        assert "Module-define" in output
         assert "#01" in output
 
     def test_tools_errors_only(self, tmp_path, capsys):
@@ -764,10 +764,10 @@ class TestCLITools:
 
     def test_tools_filter_by_name(self, tmp_path, capsys):
         (tmp_path / "20260217_085924-api.jsonl").write_text(API_TOOLS_CONTENT, encoding="utf-8")
-        cli_main(["--dir", str(tmp_path), "tools", "-s", "20260217_085924", "-t", "inspect_module"])
+        cli_main(["--dir", str(tmp_path), "tools", "-s", "20260217_085924", "-t", "Module-inspect"])
         output = capsys.readouterr().out
-        assert "inspect_module" in output
-        assert "define_module" not in output
+        assert "Module-inspect" in output
+        assert "Module-define" not in output
 
     def test_tools_empty(self, tmp_path, capsys):
         content = '{"type":"session","ts":"2026-02-17T00:00:00Z","model":"m","tools":[]}\n'
@@ -781,8 +781,8 @@ class TestCLITools:
         cli_main(["--dir", str(tmp_path), "api", "-s", "20260217_085924", "-v", "-n", "100"])
         output = capsys.readouterr().out
         # Should have indented tool call lines
-        assert "inspect_module(" in output
-        assert "define_module(" in output
+        assert "Module-inspect(" in output
+        assert "Module-define(" in output
 
     def test_sessions_shows_stats(self, tmp_path, capsys):
         (tmp_path / "20260217_085924-api.jsonl").write_text(API_TOOLS_CONTENT, encoding="utf-8")

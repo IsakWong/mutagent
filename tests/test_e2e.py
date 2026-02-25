@@ -121,7 +121,7 @@ class TestEndToEnd:
                 content="Let me inspect the module structure.",
                 tool_calls=[ToolCall(
                     id="tc_1",
-                    name="inspect_module",
+                    name="Module-inspect",
                     arguments={"module_path": "mutagent", "depth": 1},
                 )],
             ),
@@ -135,7 +135,7 @@ class TestEndToEnd:
                 content="I'll create a helper module.",
                 tool_calls=[ToolCall(
                     id="tc_2",
-                    name="define_module",
+                    name="Module-define",
                     arguments={
                         "module_path": "test_e2e.helper",
                         "source": "def add(a, b):\n    return a + b\n",
@@ -152,7 +152,7 @@ class TestEndToEnd:
                 content="Saving the module.",
                 tool_calls=[ToolCall(
                     id="tc_3",
-                    name="save_module",
+                    name="Module-save",
                     arguments={
                         "module_path": "test_e2e.helper",
                         "level": "project",
@@ -215,7 +215,7 @@ class TestEndToEnd:
                 content="",
                 tool_calls=[ToolCall(
                     id="tc_1",
-                    name="define_module",
+                    name="Module-define",
                     arguments={
                         "module_path": "test_e2e.src",
                         "source": "class Greeter:\n    def greet(self):\n        return 'hi'\n",
@@ -232,7 +232,7 @@ class TestEndToEnd:
                 content="",
                 tool_calls=[ToolCall(
                     id="tc_2",
-                    name="view_source",
+                    name="Module-view_source",
                     arguments={"target": "test_e2e.src.Greeter"},
                 )],
             ),
@@ -310,7 +310,7 @@ class TestSelfEvolution:
                 content="I'll create a math tools module.",
                 tool_calls=[ToolCall(
                     id="tc_1",
-                    name="define_module",
+                    name="Module-define",
                     arguments={
                         "module_path": "user_tools.math_tools",
                         "source": (
@@ -334,7 +334,7 @@ class TestSelfEvolution:
                 content="Now I'll implement the factorial method.",
                 tool_calls=[ToolCall(
                     id="tc_2",
-                    name="define_module",
+                    name="Module-define",
                     arguments={
                         "module_path": "user_tools.math_tools_impl",
                         "source": (
@@ -361,7 +361,7 @@ class TestSelfEvolution:
                 content="Now I'll extend the ToolSet to include the new tool.",
                 tool_calls=[ToolCall(
                     id="tc_3",
-                    name="define_module",
+                    name="Module-define",
                     arguments={
                         "module_path": "user_tools.tool_set_ext",
                         "source": (

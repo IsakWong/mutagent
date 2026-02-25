@@ -19,7 +19,7 @@ class LogToolkit(Toolkit):
 
     log_store: LogStore
 
-    def query_logs(
+    def query(
         self,
         pattern: str = "",
         level: str = "DEBUG",
@@ -38,7 +38,7 @@ class LogToolkit(Toolkit):
         Returns:
             Formatted log entries, newest first.
         """
-        return query_logs_impl.query_logs(self, pattern, level, limit, tool_capture)
+        return query_logs_impl.query(self, pattern, level, limit, tool_capture)
 
 
 from mutagent.builtins import query_logs_impl

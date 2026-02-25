@@ -52,8 +52,8 @@ def _ensure_config_modules(directory: Path, module_path: str) -> None:
         )
 
 
-@mutagent.impl(ModuleToolkit.save_module)
-def save_module(self: ModuleToolkit, module_path: str, level: str = "project") -> str:
+@mutagent.impl(ModuleToolkit.save)
+def save(self: ModuleToolkit, module_path: str, level: str = "project") -> str:
     """Persist a memory-defined module to disk."""
     try:
         dir_factory = _LEVEL_DIRS.get(level)

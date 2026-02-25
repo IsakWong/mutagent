@@ -22,24 +22,24 @@ def tools():
 class TestInspectModule:
 
     def test_inspect_mutagent(self, tools):
-        result = tools.inspect_module("mutagent")
+        result = tools.inspect("mutagent")
         assert "mutagent/" in result
 
     def test_inspect_default_module(self, tools):
-        result = tools.inspect_module()
+        result = tools.inspect()
         assert "mutagent/" in result
 
     def test_inspect_nonexistent_module(self, tools):
-        result = tools.inspect_module("nonexistent.module.xyz")
+        result = tools.inspect("nonexistent.module.xyz")
         assert "not found" in result.lower()
 
     def test_inspect_shows_classes(self, tools):
-        result = tools.inspect_module("mutagent.toolkits.module_toolkit", depth=2)
+        result = tools.inspect("mutagent.toolkits.module_toolkit", depth=2)
         assert "ModuleToolkit" in result
 
     def test_inspect_depth_limits_output(self, tools):
-        result1 = tools.inspect_module("mutagent", depth=1)
-        result2 = tools.inspect_module("mutagent", depth=3)
+        result1 = tools.inspect("mutagent", depth=1)
+        result2 = tools.inspect("mutagent", depth=3)
         # Deeper inspection should have more content
         assert len(result2) >= len(result1)
 
@@ -69,28 +69,28 @@ class TestViewSource:
 class TestDefineModule:
 
     def test_define_creates_module(self, tools):
-        result = tools.define_module("test_tool_patch.mod1", "x = 42\n")
+        result = tools.define("test_tool_patch.mod1", "x = 42\n")
         assert "OK" in result
         assert "test_tool_patch.mod1" in result
         assert sys.modules["test_tool_patch.mod1"].x == 42
 
     def test_define_reports_version(self, tools):
-        tools.define_module("test_tool_patch.ver", "v = 1\n")
-        result = tools.define_module("test_tool_patch.ver", "v = 2\n")
+        tools.define("test_tool_patch.ver", "v = 1\n")
+        result = tools.define("test_tool_patch.ver", "v = 2\n")
         assert "v2" in result
 
     def test_define_syntax_error(self, tools):
         with pytest.raises(SyntaxError):
-            tools.define_module("test_tool_patch.bad", "def f(\n")
+            tools.define("test_tool_patch.bad", "def f(\n")
 
     def test_define_mutagent_module_warns(self, tools):
-        result = tools.define_module("mutagent.test_warn_mod", "x = 1\n")
+        result = tools.define("mutagent.test_warn_mod", "x = 1\n")
         assert "OK" in result
         assert "Warning" in result
         assert "@impl" in result
 
     def test_define_normal_module_no_warning(self, tools):
-        result = tools.define_module("normal_mod", "x = 1\n")
+        result = tools.define("normal_mod", "x = 1\n")
         assert "OK" in result
         assert "Warning" not in result
 
@@ -100,7 +100,7 @@ class TestSaveModule:
     def test_save_module_project_level(self, tools, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         tools.module_manager.patch_module("test_tool_save.mod", "val = 99\n")
-        result = tools.save_module("test_tool_save.mod")
+        result = tools.save("test_tool_save.mod")
         assert "OK" in result
 
         # Verify file was written to .mutagent/ under project dir
@@ -111,7 +111,7 @@ class TestSaveModule:
     def test_save_module_user_level(self, tools, tmp_path, monkeypatch):
         monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: tmp_path))
         tools.module_manager.patch_module("test_tool_save.umod", "val = 42\n")
-        result = tools.save_module("test_tool_save.umod", level="user")
+        result = tools.save("test_tool_save.umod", level="user")
         assert "OK" in result
 
         saved_file = tmp_path / ".mutagent" / "test_tool_save" / "umod.py"
@@ -119,19 +119,19 @@ class TestSaveModule:
         assert saved_file.read_text() == "val = 42\n"
 
     def test_save_unpatched_module(self, tools):
-        result = tools.save_module("nonexistent.module")
+        result = tools.save("nonexistent.module")
         assert "Error" in result
 
     def test_save_unknown_level(self, tools):
         tools.module_manager.patch_module("test_tool_save.bad_level", "x = 1\n")
-        result = tools.save_module("test_tool_save.bad_level", level="invalid")
+        result = tools.save("test_tool_save.bad_level", level="invalid")
         assert "Error" in result
         assert "unknown level" in result
 
     def test_save_does_not_create_init_py(self, tools, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         tools.module_manager.patch_module("pkg.sub.mod", "x = 1\n")
-        tools.save_module("pkg.sub.mod")
+        tools.save("pkg.sub.mod")
 
         # Parent dirs should exist but no __init__.py
         assert (tmp_path / ".mutagent" / "pkg" / "sub").is_dir()
@@ -143,7 +143,7 @@ class TestSaveModule:
         assert not (tmp_path / ".mutagent").exists()
 
         tools.module_manager.patch_module("auto_create.mod", "y = 2\n")
-        result = tools.save_module("auto_create.mod")
+        result = tools.save("auto_create.mod")
         assert "OK" in result
         assert (tmp_path / ".mutagent").is_dir()
 
@@ -151,40 +151,40 @@ class TestSaveModule:
 class TestUnsavedModules:
 
     def test_inspect_shows_unsaved_modules(self, tools):
-        tools.define_module("unsaved_test.mod1", "x = 1\n")
-        tools.define_module("unsaved_test.mod2", "y = 2\n")
+        tools.define("unsaved_test.mod1", "x = 1\n")
+        tools.define("unsaved_test.mod2", "y = 2\n")
 
-        result = tools.inspect_module()
+        result = tools.inspect()
         assert "[Unsaved modules]" in result
         assert "unsaved_test.mod1" in result
         assert "unsaved_test.mod2" in result
 
     def test_inspect_no_unsaved_when_all_saved(self, tools, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        tools.define_module("saved_test.mod1", "x = 1\n")
-        tools.save_module("saved_test.mod1")
+        tools.define("saved_test.mod1", "x = 1\n")
+        tools.save("saved_test.mod1")
 
-        result = tools.inspect_module()
+        result = tools.inspect()
         assert "[Unsaved modules]" not in result
 
     def test_define_then_save_removes_from_unsaved(self, tools, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        tools.define_module("track_test.mod", "z = 3\n")
+        tools.define("track_test.mod", "z = 3\n")
 
         # Before save: should be unsaved
         unsaved = tools.module_manager.get_unsaved_modules()
         assert "track_test.mod" in unsaved
 
         # After save: should no longer be unsaved
-        tools.save_module("track_test.mod")
+        tools.save("track_test.mod")
         unsaved = tools.module_manager.get_unsaved_modules()
         assert "track_test.mod" not in unsaved
 
     def test_inspect_shows_version_for_unsaved(self, tools):
-        tools.define_module("ver_test.mod", "v = 1\n")
-        tools.define_module("ver_test.mod", "v = 2\n")
+        tools.define("ver_test.mod", "v = 1\n")
+        tools.define("ver_test.mod", "v = 2\n")
 
-        result = tools.inspect_module()
+        result = tools.inspect()
         assert "ver_test.mod (v2)" in result
 
 

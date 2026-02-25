@@ -111,19 +111,15 @@ class Toolkit(mutagent.Declaration):
     are automatically discovered as tools by ToolSet when
     auto_discover is enabled.
 
+    工具名格式为 ``{Prefix}-{method_name}``，前缀从类名自动生成：
+    类名以 ``Toolkit`` 结尾时去掉该后缀，否则使用完整类名。
+
     Example::
 
-        class MyTools(mutagent.Toolkit):
-            def greet(self, name: str) -> str:
-                '''Say hello.
-
-                Args:
-                    name: The person to greet.
-
-                Returns:
-                    A greeting message.
-                '''
-                return f"Hello, {name}!"
+        class WebToolkit(mutagent.Toolkit):
+            def search(self, query: str) -> str:
+                '''Search the web.'''  # → 工具名 "Web-search"
+                ...
     """
 
     pass

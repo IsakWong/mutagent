@@ -32,7 +32,7 @@ class TestMessagesToClaude:
         assert result == [{"role": "assistant", "content": "Hi there"}]
 
     def test_assistant_with_tool_calls(self):
-        tc = ToolCall(id="tc_1", name="view_source", arguments={"target": "mutagent"})
+        tc = ToolCall(id="tc_1", name="Module-view_source", arguments={"target": "mutagent"})
         msgs = [Message(role="assistant", content="Let me check.", tool_calls=[tc])]
         result = _messages_to_claude(msgs)
 
@@ -44,7 +44,7 @@ class TestMessagesToClaude:
         assert content[1] == {
             "type": "tool_use",
             "id": "tc_1",
-            "name": "view_source",
+            "name": "Module-view_source",
             "input": {"target": "mutagent"},
         }
 
@@ -98,7 +98,7 @@ class TestToolsToClaude:
 
     def test_single_tool(self):
         tools = [ToolSchema(
-            name="view_source",
+            name="Module-view_source",
             description="View source code",
             input_schema={
                 "type": "object",
@@ -110,7 +110,7 @@ class TestToolsToClaude:
         )]
         result = _tools_to_claude(tools)
         assert len(result) == 1
-        assert result[0]["name"] == "view_source"
+        assert result[0]["name"] == "Module-view_source"
         assert result[0]["description"] == "View source code"
         assert "properties" in result[0]["input_schema"]
 
@@ -145,7 +145,7 @@ class TestResponseFromClaude:
                 {
                     "type": "tool_use",
                     "id": "toolu_123",
-                    "name": "view_source",
+                    "name": "Module-view_source",
                     "input": {"target": "mutagent.client"},
                 },
             ],
@@ -157,7 +157,7 @@ class TestResponseFromClaude:
         assert len(resp.message.tool_calls) == 1
         tc = resp.message.tool_calls[0]
         assert tc.id == "toolu_123"
-        assert tc.name == "view_source"
+        assert tc.name == "Module-view_source"
         assert tc.arguments == {"target": "mutagent.client"}
         assert resp.stop_reason == "tool_use"
 
@@ -167,7 +167,7 @@ class TestResponseFromClaude:
                 {
                     "type": "tool_use",
                     "id": "toolu_1",
-                    "name": "view_source",
+                    "name": "Module-view_source",
                     "input": {"target": "a"},
                 },
                 {
@@ -235,7 +235,7 @@ class TestSendMessageIntegration:
                 {
                     "type": "tool_use",
                     "id": "toolu_abc",
-                    "name": "view_source",
+                    "name": "Module-view_source",
                     "input": {"target": "mutagent"},
                 }
             ],
@@ -248,7 +248,7 @@ class TestSendMessageIntegration:
         mock_resp.json.return_value = mock_response_data
 
         tools = [ToolSchema(
-            name="view_source",
+            name="Module-view_source",
             description="View source code",
             input_schema={"type": "object", "properties": {"target": {"type": "string"}}},
         )]
@@ -266,7 +266,7 @@ class TestSendMessageIntegration:
         resp = resp_event.response
         assert resp.stop_reason == "tool_use"
         assert len(resp.message.tool_calls) == 1
-        assert resp.message.tool_calls[0].name == "view_source"
+        assert resp.message.tool_calls[0].name == "Module-view_source"
 
     def test_send_message_api_error(self):
         """Test send_message yields error event on API error."""
