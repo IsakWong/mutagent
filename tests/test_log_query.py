@@ -109,7 +109,7 @@ class TestListSessions:
         assert engine.list_sessions() == []
 
     def test_single_session_with_both_files(self, tmp_path):
-        (tmp_path / "20260217_085924-log.log").write_text("line1\nline2\n", encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text("line1\nline2\n", encoding="utf-8")
         (tmp_path / "20260217_085924-api.jsonl").write_text('{"type":"session"}\n{"type":"call"}\n', encoding="utf-8")
         engine = LogQueryEngine(tmp_path)
         sessions = engine.list_sessions()
@@ -121,7 +121,7 @@ class TestListSessions:
         assert sessions[0].api_calls == 1  # 2 lines - 1 session header
 
     def test_session_with_log_only(self, tmp_path):
-        (tmp_path / "20260217_100000-log.log").write_text("line1\n", encoding="utf-8")
+        (tmp_path / "20260217_100000.log").write_text("line1\n", encoding="utf-8")
         engine = LogQueryEngine(tmp_path)
         sessions = engine.list_sessions()
         assert len(sessions) == 1
@@ -129,9 +129,9 @@ class TestListSessions:
         assert sessions[0].api_file is None
 
     def test_multiple_sessions_sorted(self, tmp_path):
-        (tmp_path / "20260217_100000-log.log").write_text("a\n", encoding="utf-8")
-        (tmp_path / "20260218_090000-log.log").write_text("b\n", encoding="utf-8")
-        (tmp_path / "20260216_120000-log.log").write_text("c\n", encoding="utf-8")
+        (tmp_path / "20260217_100000.log").write_text("a\n", encoding="utf-8")
+        (tmp_path / "20260218_090000.log").write_text("b\n", encoding="utf-8")
+        (tmp_path / "20260216_120000.log").write_text("c\n", encoding="utf-8")
         engine = LogQueryEngine(tmp_path)
         sessions = engine.list_sessions()
         assert len(sessions) == 3
@@ -159,7 +159,7 @@ class TestQueryLogs:
 
     @pytest.fixture
     def engine(self, tmp_path):
-        (tmp_path / "20260217_085924-log.log").write_text(LOG_CONTENT, encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text(LOG_CONTENT, encoding="utf-8")
         return LogQueryEngine(tmp_path)
 
     def test_query_all(self, engine):
@@ -192,8 +192,8 @@ class TestQueryLogs:
         assert "Critical failure" in results[0].message
 
     def test_query_latest_session(self, tmp_path):
-        (tmp_path / "20260217_085924-log.log").write_text(LOG_CONTENT, encoding="utf-8")
-        (tmp_path / "20260218_100000-log.log").write_text(
+        (tmp_path / "20260217_085924.log").write_text(LOG_CONTENT, encoding="utf-8")
+        (tmp_path / "20260218_100000.log").write_text(
             "2026-02-18 10:00:00,000 INFO     test - newer session\n",
             encoding="utf-8",
         )
@@ -231,7 +231,7 @@ class TestLoadToStore:
 
     def test_load_basic(self, tmp_path):
         content = "2026-02-17 08:59:24,301 INFO     mutagent.test - hello world\n"
-        (tmp_path / "20260217_085924-log.log").write_text(content, encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text(content, encoding="utf-8")
         engine = LogQueryEngine(tmp_path)
         store = engine.load_to_store("20260217_085924")
         assert store.count() == 1
@@ -241,7 +241,7 @@ class TestLoadToStore:
         assert entry.message == "hello world"
 
     def test_load_preserves_all_entries(self, tmp_path):
-        (tmp_path / "20260217_085924-log.log").write_text(LOG_CONTENT, encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text(LOG_CONTENT, encoding="utf-8")
         engine = LogQueryEngine(tmp_path)
         store = engine.load_to_store("20260217_085924")
         assert store.count() == 5
@@ -376,7 +376,7 @@ class TestExtractField:
 class TestCLI:
 
     def test_sessions_command(self, tmp_path, capsys):
-        (tmp_path / "20260217_085924-log.log").write_text("line1\n", encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text("line1\n", encoding="utf-8")
         cli_main(["--dir", str(tmp_path), "sessions"])
         output = capsys.readouterr().out
         assert "20260217_085924" in output
@@ -388,7 +388,7 @@ class TestCLI:
 
     def test_logs_command(self, tmp_path, capsys):
         content = "2026-02-17 08:59:24,301 INFO     mutagent.test - hello world\n"
-        (tmp_path / "20260217_085924-log.log").write_text(content, encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text(content, encoding="utf-8")
         cli_main(["--dir", str(tmp_path), "logs", "-s", "20260217_085924"])
         output = capsys.readouterr().out
         assert "hello world" in output
@@ -398,7 +398,7 @@ class TestCLI:
             "2026-02-17 08:59:24,301 INFO     mutagent.test - hello\n"
             "2026-02-17 08:59:25,000 INFO     mutagent.test - goodbye\n"
         )
-        (tmp_path / "20260217_085924-log.log").write_text(content, encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text(content, encoding="utf-8")
         cli_main(["--dir", str(tmp_path), "logs", "-s", "20260217_085924", "-p", "hello"])
         output = capsys.readouterr().out
         assert "hello" in output
@@ -425,7 +425,7 @@ class TestCLI:
 
     def test_logs_empty_result(self, tmp_path, capsys):
         content = "2026-02-17 08:59:24,301 INFO     mutagent.test - hello\n"
-        (tmp_path / "20260217_085924-log.log").write_text(content, encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text(content, encoding="utf-8")
         cli_main(["--dir", str(tmp_path), "logs", "-s", "20260217_085924", "-p", "nonexistent"])
         output = capsys.readouterr().out
         assert "No matching" in output
@@ -700,7 +700,7 @@ class TestSessionStats:
         assert 15 <= s.duration_seconds <= 17
 
     def test_session_no_api_file(self, tmp_path):
-        (tmp_path / "20260217_085924-log.log").write_text("line\n", encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text("line\n", encoding="utf-8")
         engine = LogQueryEngine(tmp_path)
         sessions = engine.list_sessions()
         s = sessions[0]
@@ -786,7 +786,7 @@ class TestCLITools:
 
     def test_sessions_shows_stats(self, tmp_path, capsys):
         (tmp_path / "20260217_085924-api.jsonl").write_text(API_TOOLS_CONTENT, encoding="utf-8")
-        (tmp_path / "20260217_085924-log.log").write_text("line\n", encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text("line\n", encoding="utf-8")
         cli_main(["--dir", str(tmp_path), "sessions"])
         output = capsys.readouterr().out
         assert "Tools(ok/err)" in output
@@ -813,11 +813,11 @@ class TestMultilinePreview:
 
     @pytest.fixture
     def engine(self, tmp_path):
-        (tmp_path / "20260217_085924-log.log").write_text(MULTILINE_LOG, encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text(MULTILINE_LOG, encoding="utf-8")
         return LogQueryEngine(tmp_path)
 
     def test_default_preview_shows_3_lines(self, tmp_path, capsys):
-        (tmp_path / "20260217_085924-log.log").write_text(MULTILINE_LOG, encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text(MULTILINE_LOG, encoding="utf-8")
         cli_main(["--dir", str(tmp_path), "logs", "-s", "20260217_085924", "-l", "ERROR"])
         output = capsys.readouterr().out
         lines = output.strip().split("\n")
@@ -827,7 +827,7 @@ class TestMultilinePreview:
         assert "+3 lines" in lines[-1] or "use -e to expand" in lines[-1]
 
     def test_expand_shows_all_lines(self, tmp_path, capsys):
-        (tmp_path / "20260217_085924-log.log").write_text(MULTILINE_LOG, encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text(MULTILINE_LOG, encoding="utf-8")
         cli_main(["--dir", str(tmp_path), "logs", "-s", "20260217_085924", "-l", "ERROR", "-e"])
         output = capsys.readouterr().out
         assert "ConnectionError" in output
@@ -835,14 +835,14 @@ class TestMultilinePreview:
         assert "use -e to expand" not in output
 
     def test_single_line_message_no_preview_hint(self, tmp_path, capsys):
-        (tmp_path / "20260217_085924-log.log").write_text(MULTILINE_LOG, encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text(MULTILINE_LOG, encoding="utf-8")
         cli_main(["--dir", str(tmp_path), "logs", "-s", "20260217_085924", "-p", "single line"])
         output = capsys.readouterr().out
         assert "single line message" in output
         assert "use -e to expand" not in output
 
     def test_continuation_lines_aligned(self, tmp_path, capsys):
-        (tmp_path / "20260217_085924-log.log").write_text(MULTILINE_LOG, encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text(MULTILINE_LOG, encoding="utf-8")
         cli_main(["--dir", str(tmp_path), "logs", "-s", "20260217_085924", "-l", "ERROR", "-e"])
         output = capsys.readouterr().out
         lines = output.strip().split("\n")
@@ -866,7 +866,7 @@ LOGGER_FILTER_LOG = """\
 class TestLoggerFilter:
 
     def test_engine_logger_name_filter(self, tmp_path):
-        (tmp_path / "20260217_085924-log.log").write_text(LOGGER_FILTER_LOG, encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text(LOGGER_FILTER_LOG, encoding="utf-8")
         engine = LogQueryEngine(tmp_path)
         results = engine.query_logs(session="20260217_085924", logger_name="mutbot.web.server", limit=100)
         assert len(results) == 2
@@ -874,20 +874,20 @@ class TestLoggerFilter:
         assert results[1].logger_name == "mutbot.web.server.auth"
 
     def test_engine_logger_exact_match(self, tmp_path):
-        (tmp_path / "20260217_085924-log.log").write_text(LOGGER_FILTER_LOG, encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text(LOGGER_FILTER_LOG, encoding="utf-8")
         engine = LogQueryEngine(tmp_path)
         results = engine.query_logs(session="20260217_085924", logger_name="mutbot.proxy.routes", limit=100)
         assert len(results) == 1
         assert results[0].logger_name == "mutbot.proxy.routes"
 
     def test_engine_no_match(self, tmp_path):
-        (tmp_path / "20260217_085924-log.log").write_text(LOGGER_FILTER_LOG, encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text(LOGGER_FILTER_LOG, encoding="utf-8")
         engine = LogQueryEngine(tmp_path)
         results = engine.query_logs(session="20260217_085924", logger_name="nonexistent", limit=100)
         assert len(results) == 0
 
     def test_cli_logger_flag(self, tmp_path, capsys):
-        (tmp_path / "20260217_085924-log.log").write_text(LOGGER_FILTER_LOG, encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text(LOGGER_FILTER_LOG, encoding="utf-8")
         cli_main(["--dir", str(tmp_path), "logs", "-s", "20260217_085924", "--logger", "mutbot.web.server"])
         output = capsys.readouterr().out
         assert "server started" in output
@@ -927,7 +927,7 @@ class TestSessionDiscovery:
 
     def test_timestamp_sessions(self, tmp_path):
         """Traditional YYYYMMDD_HHMMSS format."""
-        (tmp_path / "20260217_085924-log.log").write_text("line\n", encoding="utf-8")
+        (tmp_path / "20260217_085924.log").write_text("line\n", encoding="utf-8")
         (tmp_path / "20260217_085924-api.jsonl").write_text('{"type":"session"}\n', encoding="utf-8")
         engine = LogQueryEngine(tmp_path)
         sessions = engine.list_sessions()
@@ -935,28 +935,28 @@ class TestSessionDiscovery:
         assert sessions[0].timestamp == "20260217_085924"
 
     def test_session_id_format(self, tmp_path):
-        """Hex session_id format (mutbot per-session API files)."""
-        (tmp_path / "a1b2c3d4e5f6-api.jsonl").write_text('{"type":"session"}\n{"type":"call"}\n', encoding="utf-8")
+        """Session files with session- prefix and hex id (mutbot per-session)."""
+        (tmp_path / "session-20260217_085924-a1b2c3d4e5f6-api.jsonl").write_text('{"type":"session"}\n{"type":"call"}\n', encoding="utf-8")
         engine = LogQueryEngine(tmp_path)
         sessions = engine.list_sessions()
         assert len(sessions) == 1
-        assert sessions[0].timestamp == "a1b2c3d4e5f6"
+        assert sessions[0].timestamp == "session-20260217_085924-a1b2c3d4e5f6"
         assert sessions[0].api_file is not None
         assert sessions[0].api_calls == 1
 
     def test_server_log_with_prefix(self, tmp_path):
         """Server log files with server- prefix."""
-        (tmp_path / "server-20260217_085924-log.log").write_text("line\n", encoding="utf-8")
+        (tmp_path / "server-20260217_085924.log").write_text("line\n", encoding="utf-8")
         engine = LogQueryEngine(tmp_path)
         sessions = engine.list_sessions()
         assert len(sessions) == 1
         assert sessions[0].timestamp == "server-20260217_085924"
 
     def test_mixed_formats(self, tmp_path):
-        """Both timestamp and session_id formats in same directory."""
-        (tmp_path / "server-20260217_085924-log.log").write_text("line\n", encoding="utf-8")
-        (tmp_path / "abc123def456-api.jsonl").write_text('{"type":"session"}\n', encoding="utf-8")
-        (tmp_path / "def789abc012-api.jsonl").write_text('{"type":"session"}\n', encoding="utf-8")
+        """Server log and session files in same directory."""
+        (tmp_path / "server-20260217_085924.log").write_text("line\n", encoding="utf-8")
+        (tmp_path / "session-20260217_100000-abc123def456-api.jsonl").write_text('{"type":"session"}\n', encoding="utf-8")
+        (tmp_path / "session-20260217_110000-def789abc012-api.jsonl").write_text('{"type":"session"}\n', encoding="utf-8")
         engine = LogQueryEngine(tmp_path)
         sessions = engine.list_sessions()
         assert len(sessions) == 3
@@ -970,10 +970,10 @@ class TestSessionDiscovery:
         assert len(sessions) == 0
 
     def test_resolve_by_session_id(self, tmp_path):
-        """Can query logs by session_id."""
+        """Can query logs by session prefix."""
         content = "2026-02-17 08:59:24,301 INFO     test - message from session\n"
-        (tmp_path / "abc123-log.log").write_text(content, encoding="utf-8")
+        (tmp_path / "session-20260217_085924-abc123.log").write_text(content, encoding="utf-8")
         engine = LogQueryEngine(tmp_path)
-        results = engine.query_logs(session="abc123", limit=10)
+        results = engine.query_logs(session="session-20260217_085924-abc123", limit=10)
         assert len(results) == 1
         assert "message from session" in results[0].message

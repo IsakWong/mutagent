@@ -218,7 +218,7 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
     if self.config.get("logging.file_log", True):
         log_dir.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(
-            log_dir / f"{session_ts}-log.log", encoding="utf-8"
+            log_dir / f"{session_ts}.log", encoding="utf-8"
         )
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(SingleLineFormatter(

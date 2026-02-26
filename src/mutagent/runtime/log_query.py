@@ -23,8 +23,16 @@ _LOG_LINE_RE = re.compile(
 # Regex to detect the start of a new log entry (timestamp at line start)
 _TIMESTAMP_START_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
 
-# Known log file suffixes for session prefix extraction
-_LOG_SUFFIXES = ("-log.log", "-api.jsonl")
+# File naming patterns:
+# - server-YYYYMMDD_HHMMSS.log          (server log)
+# - session-YYYYMMDD_HHMMSS-HEXID.log   (session log)
+# - session-YYYYMMDD_HHMMSS-HEXID-api.jsonl (session API)
+# - YYYYMMDD_HHMMSS.log                 (mutagent standalone log)
+# - YYYYMMDD_HHMMSS-api.jsonl           (mutagent standalone API)
+_SESSION_FILE_RE = re.compile(
+    r"^((?:server-|session-)?\d{8}_\d{6}(?:-[0-9a-f]+)?)"  # prefix
+    r"(?:\.log|-api\.jsonl)$"                                # suffix
+)
 
 # Level name → numeric value for comparison
 _LEVEL_VALUES = {
@@ -96,7 +104,7 @@ class LogQueryEngine:
     def list_sessions(self) -> list[SessionInfo]:
         """List all sessions found in the log directory.
 
-        Scans for files ending with ``-log.log`` or ``-api.jsonl``,
+        Scans for ``.log``, ``-log.log``, and ``-api.jsonl`` files,
         extracts session identifiers from filename prefixes, and pairs them.
         Also computes tool call statistics and session duration from API JSONL files.
         """
@@ -112,13 +120,13 @@ class LogQueryEngine:
             if session_id not in sessions:
                 sessions[session_id] = SessionInfo(timestamp=session_id)
 
-            if path.name.endswith("-log.log"):
-                sessions[session_id].log_file = path
-                sessions[session_id].log_lines = _count_lines(path)
-            elif path.name.endswith("-api.jsonl"):
+            if path.name.endswith("-api.jsonl"):
                 sessions[session_id].api_file = path
                 n = _count_lines(path)
                 sessions[session_id].api_calls = max(0, n - 1) if n >= 0 else -1
+            elif path.name.endswith(".log"):
+                sessions[session_id].log_file = path
+                sessions[session_id].log_lines = _count_lines(path)
 
         # Compute tool statistics and duration for each session with an API file
         for info in sessions.values():
@@ -365,10 +373,10 @@ class LogQueryEngine:
     def _resolve_log_file(self, session: str) -> Path | None:
         """Find the log file for a session."""
         if session:
-            path = self._log_dir / f"{session}-log.log"
+            path = self._log_dir / f"{session}.log"
             return path if path.is_file() else None
 
-        return self._find_latest_file("-log.log")
+        return self._find_latest_file(".log")
 
     def _resolve_api_file(self, session: str) -> Path | None:
         """Find the API file for a session."""
@@ -379,12 +387,16 @@ class LogQueryEngine:
         return self._find_latest_file("-api.jsonl")
 
     def _find_latest_file(self, suffix: str) -> Path | None:
-        """Find the latest file matching suffix by filename sort."""
+        """Find the latest file matching suffix by filename sort.
+
+        Only considers files that match known session file patterns.
+        """
         if not self._log_dir.is_dir():
             return None
 
         candidates = sorted(
-            (p for p in self._log_dir.iterdir() if p.name.endswith(suffix)),
+            (p for p in self._log_dir.iterdir()
+             if p.name.endswith(suffix) and _extract_session_prefix(p.name) is not None),
             key=lambda p: p.name,
             reverse=True,
         )
@@ -399,12 +411,16 @@ class LogQueryEngine:
 def _extract_session_prefix(filename: str) -> str | None:
     """Extract session identifier from a log filename.
 
-    Recognizes files like ``20260217_085924-log.log``, ``a1b2c3d4e5f6-api.jsonl``,
-    or ``server-20260217_085924-log.log`` (server prefix is included in the session id).
+    Recognizes files like:
+    - ``server-20260217_085924.log`` (server log)
+    - ``session-20260217_085924-a1b2c3d4e5f6.log`` (session log)
+    - ``session-20260217_085924-a1b2c3d4e5f6-api.jsonl`` (session API)
+    - ``20260217_085924.log`` (mutagent standalone log)
+    - ``20260217_085924-api.jsonl`` (mutagent standalone API)
     """
-    for suffix in _LOG_SUFFIXES:
-        if filename.endswith(suffix):
-            return filename[: -len(suffix)]
+    m = _SESSION_FILE_RE.match(filename)
+    if m:
+        return m.group(1)
     return None
 
 
