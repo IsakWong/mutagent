@@ -106,67 +106,202 @@ class TestConfigGet:
 
 
 # ---------------------------------------------------------------------------
-# Config.get_model() tests
+# Config.get_model() tests (provider-based)
 # ---------------------------------------------------------------------------
 
 class TestConfigGetModel:
 
-    def test_get_model_by_name(self):
+    def test_get_model_list_form(self):
+        """list 形式：name 匹配 model_id。"""
         config = Config(_layers=[(Path(), {
-            "models": {"gpt": {"model_id": "gpt-4", "auth_token": "sk-123", "base_url": "https://api.openai.com"}},
+            "providers": {
+                "anthropic": {
+                    "provider": "AnthropicProvider",
+                    "base_url": "https://api.anthropic.com",
+                    "auth_token": "sk-123",
+                    "models": ["claude-sonnet-4", "claude-haiku-4.5"],
+                }
+            },
         })])
-        model = config.get_model("gpt")
-        assert model["model_id"] == "gpt-4"
+        model = config.get_model("claude-sonnet-4")
+        assert model["model_id"] == "claude-sonnet-4"
+        assert model["provider"] == "AnthropicProvider"
         assert model["auth_token"] == "sk-123"
+        assert "models" not in model  # models 字段不应出现在返回值中
+
+    def test_get_model_dict_form_key_match(self):
+        """dict 形式：按 key（别名）匹配。"""
+        config = Config(_layers=[(Path(), {
+            "providers": {
+                "copilot": {
+                    "provider": "CopilotProvider",
+                    "github_token": "ghu_xxx",
+                    "models": {
+                        "copilot-claude": "claude-sonnet-4",
+                        "copilot-gpt": "gpt-4.1",
+                    },
+                }
+            },
+        })])
+        model = config.get_model("copilot-claude")
+        assert model["model_id"] == "claude-sonnet-4"
+        assert model["provider"] == "CopilotProvider"
+        assert model["github_token"] == "ghu_xxx"
+
+    def test_get_model_dict_form_value_no_match(self):
+        """dict 形式：按 value（model_id）不匹配。"""
+        config = Config(_layers=[(Path(), {
+            "providers": {
+                "copilot": {
+                    "provider": "CopilotProvider",
+                    "models": {
+                        "copilot-claude": "claude-sonnet-4",
+                    },
+                }
+            },
+        })])
+        with pytest.raises(SystemExit, match="not found"):
+            config.get_model("claude-sonnet-4")
+
+    def test_get_model_provider_order_priority(self):
+        """同名模型：先配置的 provider 胜出。"""
+        config = Config(_layers=[(Path(), {
+            "providers": {
+                "copilot": {
+                    "provider": "CopilotProvider",
+                    "github_token": "ghu_xxx",
+                    "models": ["claude-sonnet-4"],
+                },
+                "anthropic": {
+                    "provider": "AnthropicProvider",
+                    "auth_token": "sk-123",
+                    "models": ["claude-sonnet-4"],
+                },
+            },
+        })])
+        model = config.get_model("claude-sonnet-4")
+        assert model["provider"] == "CopilotProvider"
 
     def test_get_model_default_name(self):
+        """default_model 配置时直接使用。"""
         config = Config(_layers=[(Path(), {
-            "models": {"claude": {"model_id": "claude-3", "auth_token": "key"}},
-            "default_model": "claude",
+            "default_model": "claude-haiku-4.5",
+            "providers": {
+                "anthropic": {
+                    "provider": "AnthropicProvider",
+                    "auth_token": "k",
+                    "models": ["claude-sonnet-4", "claude-haiku-4.5"],
+                }
+            },
         })])
         model = config.get_model()
-        assert model["model_id"] == "claude-3"
+        assert model["model_id"] == "claude-haiku-4.5"
 
-    def test_get_model_single_model_auto_default(self):
-        """When only one model exists and no default_model, it should be auto-selected."""
+    def test_get_model_auto_default_first_provider_first_model(self):
+        """无 default_model 时取首个 provider 的首个 model。"""
         config = Config(_layers=[(Path(), {
-            "models": {"only": {"model_id": "m", "auth_token": "k"}},
+            "providers": {
+                "openai": {
+                    "provider": "OpenAIProvider",
+                    "auth_token": "k",
+                    "models": ["gpt-4.1", "gpt-4.1-mini"],
+                }
+            },
         })])
         model = config.get_model()
-        assert model["model_id"] == "m"
+        assert model["model_id"] == "gpt-4.1"
+
+    def test_get_model_auto_default_dict_form(self):
+        """无 default_model 时 dict 形式取首个 key。"""
+        config = Config(_layers=[(Path(), {
+            "providers": {
+                "copilot": {
+                    "provider": "CopilotProvider",
+                    "models": {"my-claude": "claude-sonnet-4", "my-gpt": "gpt-4.1"},
+                }
+            },
+        })])
+        model = config.get_model()
+        assert model["model_id"] == "claude-sonnet-4"
 
     def test_get_model_not_found_exits(self):
-        config = Config(_layers=[(Path(), {"models": {}})])
+        config = Config(_layers=[(Path(), {
+            "providers": {
+                "anthropic": {
+                    "provider": "AnthropicProvider",
+                    "models": ["claude-sonnet-4"],
+                }
+            },
+        })])
         with pytest.raises(SystemExit, match="not found"):
             config.get_model("nonexistent")
 
-    def test_get_model_empty_auth_token_allowed(self):
-        """get_model() no longer validates auth_token; providers do it themselves."""
-        config = Config(_layers=[(Path(), {
-            "models": {"test": {"model_id": "m", "auth_token": ""}},
-            "default_model": "test",
-        })])
-        model = config.get_model("test")
-        assert model["model_id"] == "m"
-        assert model["auth_token"] == ""
+    def test_get_model_no_providers_exits(self):
+        config = Config(_layers=[(Path(), {})])
+        with pytest.raises(SystemExit, match="no providers"):
+            config.get_model("anything")
 
-    def test_get_model_no_default_multiple_models_exits(self):
-        config = Config(_layers=[(Path(), {
-            "models": {"a": {"auth_token": "k"}, "b": {"auth_token": "k"}},
-        })])
-        with pytest.raises(SystemExit, match="no default_model"):
-            config.get_model()
 
-    def test_get_model_returns_copy(self):
-        """Returned dict should be a copy, not a reference to internal data."""
+# ---------------------------------------------------------------------------
+# Config.get_all_models() tests
+# ---------------------------------------------------------------------------
+
+class TestConfigGetAllModels:
+
+    def test_list_form(self):
         config = Config(_layers=[(Path(), {
-            "models": {"x": {"model_id": "m", "auth_token": "k"}},
-            "default_model": "x",
+            "providers": {
+                "anthropic": {
+                    "provider": "AnthropicProvider",
+                    "models": ["claude-sonnet-4", "claude-haiku-4.5"],
+                }
+            },
         })])
-        m1 = config.get_model("x")
-        m1["extra"] = True
-        m2 = config.get_model("x")
-        assert "extra" not in m2
+        models = config.get_all_models()
+        assert len(models) == 2
+        assert models[0] == {
+            "name": "claude-sonnet-4",
+            "model_id": "claude-sonnet-4",
+            "provider": "AnthropicProvider",
+            "provider_name": "anthropic",
+        }
+
+    def test_dict_form(self):
+        config = Config(_layers=[(Path(), {
+            "providers": {
+                "copilot": {
+                    "provider": "CopilotProvider",
+                    "models": {"my-claude": "claude-sonnet-4"},
+                }
+            },
+        })])
+        models = config.get_all_models()
+        assert len(models) == 1
+        assert models[0]["name"] == "my-claude"
+        assert models[0]["model_id"] == "claude-sonnet-4"
+
+    def test_multiple_providers(self):
+        config = Config(_layers=[(Path(), {
+            "providers": {
+                "copilot": {
+                    "provider": "CopilotProvider",
+                    "models": ["claude-sonnet-4"],
+                },
+                "openai": {
+                    "provider": "OpenAIProvider",
+                    "models": {"my-gpt": "gpt-4.1"},
+                },
+            },
+        })])
+        models = config.get_all_models()
+        assert len(models) == 2
+        assert models[0]["provider_name"] == "copilot"
+        assert models[1]["provider_name"] == "openai"
+        assert models[1]["name"] == "my-gpt"
+
+    def test_no_providers(self):
+        config = Config(_layers=[(Path(), {})])
+        assert config.get_all_models() == []
 
 
 # ---------------------------------------------------------------------------

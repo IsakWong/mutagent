@@ -27,12 +27,14 @@ def _create_test_agent(
 ) -> Agent:
     """Create an Agent for testing via App.setup_agent()."""
     config = Config(_layers=[(Path(), {
-        "models": {"test": {
+        "providers": {"test": {
+            "provider": "AnthropicProvider",
             "model_id": model,
             "auth_token": api_key,
             "base_url": base_url,
+            "models": [model],
         }},
-        "default_model": "test",
+        "default_model": model,
     })])
     entry = App(config=config)
     entry.setup_agent(system_prompt=system_prompt)

@@ -79,6 +79,20 @@ class Config(mutagent.Declaration):
         """
         return config_impl.get_model(self, name)
 
+    def get_all_models(self) -> list[dict]:
+        """列出所有已配置的模型。
+
+        遍历 ``providers`` 配置，展开每个 provider 的 models 列表。
+
+        Returns:
+            每个模型一个 dict，包含：
+            - ``name``: 模型显示名（list 形式 = model_id，dict 形式 = alias key）
+            - ``model_id``: 实际发送给 API 的 model_id
+            - ``provider``: provider 类路径
+            - ``provider_name``: provider 配置 key（如 "copilot"、"anthropic"）
+        """
+        return config_impl.get_all_models(self)
+
     def section(self, key: str) -> Config:
         """Get a sub-configuration view for a top-level key.
 

@@ -68,11 +68,57 @@ def get(self, path: str, default: Any = None, *, merge: bool = True) -> Any:
 def get_model(self, name: str | None = None) -> dict:
     if name is None:
         name = _resolve_default_model(self)
-    models = self.get("models", {})
-    if name not in models:
-        raise SystemExit(f"Error: model '{name}' not found in config.")
-    model = dict(models[name])  # shallow copy
-    return model
+    providers = self.get("providers", {})
+    if not providers:
+        raise SystemExit(
+            "Error: no providers configured.\n"
+            "Run the setup wizard or add a 'providers' section to your config."
+        )
+    for _prov_name, prov_conf in providers.items():
+        models = prov_conf.get("models", [])
+        if isinstance(models, list):
+            # list 形式：name 匹配 model_id
+            if name in models:
+                result = {k: v for k, v in prov_conf.items() if k != "models"}
+                result["model_id"] = name
+                return result
+        elif isinstance(models, dict):
+            # dict 形式：仅按 key（别名）匹配
+            if name in models:
+                result = {k: v for k, v in prov_conf.items() if k != "models"}
+                result["model_id"] = models[name]
+                return result
+    available = _collect_model_names(providers)
+    raise SystemExit(
+        f"Error: model '{name}' not found in any provider.\n"
+        f"Available models: {', '.join(available)}"
+    )
+
+
+@mutagent.impl(Config.get_all_models)
+def get_all_models(self) -> list[dict]:
+    providers = self.get("providers", {})
+    result: list[dict] = []
+    for prov_name, prov_conf in providers.items():
+        provider_cls = prov_conf.get("provider", "mutagent.builtins.anthropic_provider.AnthropicProvider")
+        models = prov_conf.get("models", [])
+        if isinstance(models, list):
+            for model_id in models:
+                result.append({
+                    "name": model_id,
+                    "model_id": model_id,
+                    "provider": provider_cls,
+                    "provider_name": prov_name,
+                })
+        elif isinstance(models, dict):
+            for alias, model_id in models.items():
+                result.append({
+                    "name": alias,
+                    "model_id": model_id,
+                    "provider": provider_cls,
+                    "provider_name": prov_name,
+                })
+    return result
 
 
 @mutagent.impl(Config.section)
@@ -136,13 +182,31 @@ def _resolve_default_model(config: Config) -> str:
     default = config.get("default_model", "")
     if default:
         return default
-    models = config.get("models", {})
-    if len(models) == 1:
-        return next(iter(models))
-    raise SystemExit(
-        "Error: no default_model configured and multiple models available.\n"
-        f"Available models: {', '.join(models.keys())}"
-    )
+    providers = config.get("providers", {})
+    if not providers:
+        raise SystemExit(
+            "Error: no providers configured and no default_model set."
+        )
+    # 取第一个 provider 的第一个 model
+    for _prov_name, prov_conf in providers.items():
+        models = prov_conf.get("models", [])
+        if isinstance(models, list) and models:
+            return models[0]
+        elif isinstance(models, dict) and models:
+            return next(iter(models))
+    raise SystemExit("Error: no models configured in any provider.")
+
+
+def _collect_model_names(providers: dict) -> list[str]:
+    """从所有 provider 收集可用模型名称。"""
+    names: list[str] = []
+    for _prov_name, prov_conf in providers.items():
+        models = prov_conf.get("models", [])
+        if isinstance(models, list):
+            names.extend(models)
+        elif isinstance(models, dict):
+            names.extend(models.keys())
+    return names
 
 
 def _load_json(path: Path) -> dict | None:
