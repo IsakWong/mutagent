@@ -18,6 +18,7 @@ from mutagent.builtins import config_impl as _config_impl
 
 _load_json = _config_impl._load_json
 _resolve_paths_inplace = _config_impl._resolve_paths_inplace
+_expand_env = _config_impl._expand_env
 
 
 # ---------------------------------------------------------------------------
@@ -139,13 +140,15 @@ class TestConfigGetModel:
         with pytest.raises(SystemExit, match="not found"):
             config.get_model("nonexistent")
 
-    def test_get_model_empty_auth_token_exits(self):
+    def test_get_model_empty_auth_token_allowed(self):
+        """get_model() no longer validates auth_token; providers do it themselves."""
         config = Config(_layers=[(Path(), {
             "models": {"test": {"model_id": "m", "auth_token": ""}},
             "default_model": "test",
         })])
-        with pytest.raises(SystemExit, match="auth_token"):
-            config.get_model("test")
+        model = config.get_model("test")
+        assert model["model_id"] == "m"
+        assert model["auth_token"] == ""
 
     def test_get_model_no_default_multiple_models_exits(self):
         config = Config(_layers=[(Path(), {
@@ -199,7 +202,7 @@ class TestConfigLoad:
     def test_load_returns_config(self, tmp_path, monkeypatch):
         """Config.load() should return a Config instance even without any config files."""
         monkeypatch.chdir(tmp_path)
-        config = Config.load(".mutagent/config.json")
+        config = Config.load([".mutagent/config.json"])
         assert isinstance(config, Config)
 
     def test_load_project_config(self, tmp_path, monkeypatch):
@@ -210,7 +213,7 @@ class TestConfigLoad:
         (project_dir / "config.json").write_text(
             json.dumps({"custom_key": "project_value"}), encoding="utf-8"
         )
-        config = Config.load(".mutagent/config.json")
+        config = Config.load([".mutagent/config.json"])
         assert config.get("custom_key") == "project_value"
 
 
@@ -249,3 +252,143 @@ class TestHelpers:
         data = {"foo": "bar"}
         _resolve_paths_inplace(data, Path("/x"))
         assert data == {"foo": "bar"}
+
+
+# ---------------------------------------------------------------------------
+# Config.load() with file list tests
+# ---------------------------------------------------------------------------
+
+class TestConfigLoadFileList:
+
+    def test_load_with_explicit_list(self, tmp_path, monkeypatch):
+        """Config.load([path1, path2]) loads both and merges with priority."""
+        monkeypatch.chdir(tmp_path)
+        d1 = tmp_path / "low"
+        d1.mkdir()
+        (d1 / "config.json").write_text(
+            json.dumps({"key": "low", "only_low": True}), encoding="utf-8"
+        )
+        d2 = tmp_path / "high"
+        d2.mkdir()
+        (d2 / "config.json").write_text(
+            json.dumps({"key": "high", "only_high": True}), encoding="utf-8"
+        )
+        config = Config.load([str(d1 / "config.json"), str(d2 / "config.json")])
+        assert config.get("key") == "high"
+        assert config.get("only_low") is True
+        assert config.get("only_high") is True
+
+    def test_load_skips_missing_files(self, tmp_path, monkeypatch):
+        """Missing files in the list are silently skipped."""
+        monkeypatch.chdir(tmp_path)
+        d1 = tmp_path / "exists"
+        d1.mkdir()
+        (d1 / "config.json").write_text(
+            json.dumps({"present": True}), encoding="utf-8"
+        )
+        config = Config.load([
+            str(tmp_path / "nonexistent" / "config.json"),
+            str(d1 / "config.json"),
+        ])
+        assert config.get("present") is True
+
+    def test_load_tilde_expansion(self, tmp_path, monkeypatch):
+        """Paths starting with ~ should expand to the home directory."""
+        monkeypatch.chdir(tmp_path)
+        home_dir = Path.home() / ".test_mutagent_config_load"
+        home_dir.mkdir(parents=True, exist_ok=True)
+        config_file = home_dir / "config.json"
+        config_file.write_text(json.dumps({"from_home": True}), encoding="utf-8")
+        try:
+            config = Config.load([str(Path("~") / ".test_mutagent_config_load" / "config.json")])
+            assert config.get("from_home") is True
+        finally:
+            config_file.unlink(missing_ok=True)
+            home_dir.rmdir()
+
+    def test_load_list_merge_priority(self, tmp_path, monkeypatch):
+        """Later files in the list have higher priority."""
+        monkeypatch.chdir(tmp_path)
+        for i, name in enumerate(["a", "b", "c"]):
+            d = tmp_path / name
+            d.mkdir()
+            (d / "config.json").write_text(
+                json.dumps({"default_model": name, "models": {name: {"id": i}}}),
+                encoding="utf-8",
+            )
+        config = Config.load([
+            str(tmp_path / "a" / "config.json"),
+            str(tmp_path / "b" / "config.json"),
+            str(tmp_path / "c" / "config.json"),
+        ])
+        # default_model: highest priority (c) wins
+        assert config.get("default_model") == "c"
+        # models: all merged
+        models = config.get("models")
+        assert "a" in models and "b" in models and "c" in models
+
+
+# ---------------------------------------------------------------------------
+# Environment variable expansion tests
+# ---------------------------------------------------------------------------
+
+class TestEnvExpansion:
+
+    def test_expand_dollar_var(self, monkeypatch):
+        """$VAR syntax is expanded."""
+        monkeypatch.setenv("TEST_KEY", "secret123")
+        config = Config(_layers=[(Path(), {"auth_token": "$TEST_KEY"})])
+        assert config.get("auth_token") == "secret123"
+
+    def test_expand_dollar_brace_var(self, monkeypatch):
+        """${VAR} syntax is expanded."""
+        monkeypatch.setenv("MY_TOKEN", "abc")
+        config = Config(_layers=[(Path(), {"token": "${MY_TOKEN}"})])
+        assert config.get("token") == "abc"
+
+    def test_undefined_var_preserved(self):
+        """Undefined env vars are preserved as-is."""
+        config = Config(_layers=[(Path(), {"key": "$UNDEFINED_VAR_XYZ"})])
+        assert config.get("key") == "$UNDEFINED_VAR_XYZ"
+
+    def test_expand_nested_dict(self, monkeypatch):
+        """Env vars in nested dicts are expanded recursively."""
+        monkeypatch.setenv("NESTED_VAL", "deep")
+        config = Config(_layers=[(Path(), {
+            "outer": {"inner": {"val": "$NESTED_VAL"}}
+        })])
+        assert config.get("outer.inner.val") == "deep"
+
+    def test_expand_in_list(self, monkeypatch):
+        """Env vars in list values are expanded."""
+        monkeypatch.setenv("LIST_VAL", "item")
+        config = Config(_layers=[(Path(), {"items": ["$LIST_VAL", "static"]})])
+        result = config.get("items")
+        assert result == ["item", "static"]
+
+    def test_non_string_values_unchanged(self):
+        """int, bool, None values are not affected."""
+        config = Config(_layers=[(Path(), {"count": 42, "flag": True})])
+        assert config.get("count") == 42
+        assert config.get("flag") is True
+
+    def test_expand_does_not_modify_layers(self, monkeypatch):
+        """Expansion is lazy; _layers data stays unmodified."""
+        monkeypatch.setenv("LAZY_VAR", "expanded")
+        raw_data = {"key": "$LAZY_VAR"}
+        config = Config(_layers=[(Path(), raw_data)])
+        config.get("key")  # trigger expansion
+        assert raw_data["key"] == "$LAZY_VAR"
+
+    def test_expand_mixed_text(self, monkeypatch):
+        """$VAR embedded in a larger string is expanded."""
+        monkeypatch.setenv("HOST", "localhost")
+        config = Config(_layers=[(Path(), {"url": "http://$HOST:8080/api"})])
+        assert config.get("url") == "http://localhost:8080/api"
+
+    def test_expand_multiple_vars(self, monkeypatch):
+        """Multiple vars in one string are all expanded."""
+        monkeypatch.setenv("PROTO", "https")
+        monkeypatch.setenv("DOMAIN", "example.com")
+        config = Config(_layers=[(Path(), {"url": "$PROTO://$DOMAIN"})])
+        assert config.get("url") == "https://example.com"

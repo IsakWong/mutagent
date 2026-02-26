@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -12,31 +14,22 @@ from mutagent.config import Config
 
 @classmethod
 @mutagent.impl(Config.load)
-def load(cls, config_path: Path) -> Config:
-    """Scan config files from all levels and construct a Config object.
+def load(cls, config_files: list[str | Path]) -> Config:
+    """从配置文件列表构建 Config 对象。
 
-    Priority: ./.mutagent/config.json > ~/.mutagent/config.json > package config.json
-
-    This is a plain classmethod (not an @impl stub) because it runs
-    during the bootstrap phase before builtins are loaded.
+    列表按序加载，靠后的优先级更高。
     """
     layers: list[tuple[Path, dict]] = []
-
-    # Level 2: user-level config
-    home_config = Path.home() / config_path
-    if home_config.exists():
-        data = _load_json(home_config)
+    for raw_path in config_files:
+        p = Path(raw_path).expanduser()
+        if not p.is_absolute():
+            p = (Path.cwd() / p).resolve()
+        if not p.exists():
+            continue
+        data = _load_json(p)
         if data is not None:
-            _resolve_paths_inplace(data, home_config.parent)
-            layers.append((home_config.parent, data))
-
-    # Level 1: project-level config (highest priority)
-    project_config = Path.cwd() / config_path
-    if project_config.exists():
-        data = _load_json(project_config)
-        if data is not None:
-            _resolve_paths_inplace(data, project_config.parent)
-            layers.append((project_config.parent, data))
+            _resolve_paths_inplace(data, p.parent)
+            layers.append((p.parent, data))
 
     return cls(_layers=layers)
 
@@ -68,7 +61,7 @@ def get(self, path: str, default: Any = None, *, merge: bool = True) -> Any:
         else:
             return default
 
-    return resolved
+    return _expand_env(resolved)
 
 
 @mutagent.impl(Config.get_model)
@@ -79,11 +72,6 @@ def get_model(self, name: str | None = None) -> dict:
     if name not in models:
         raise SystemExit(f"Error: model '{name}' not found in config.")
     model = dict(models[name])  # shallow copy
-    if not model.get("auth_token"):
-        raise SystemExit(
-            f"Error: auth_token for model '{name}' is empty.\n"
-            f"Set it in ~/.mutagent/config.json or ./.mutagent/config.json."
-        )
     return model
 
 
@@ -95,6 +83,25 @@ def section(self, key: str) -> Config:
 
         return Config(_layers=[(Path(), value)])
     return Config(_layers=[])
+
+
+def _expand_env(value: Any) -> Any:
+    """递归展开配置值中的环境变量引用。
+
+    支持 $VAR 和 ${VAR} 语法。环境变量不存在时保留原文。
+    仅对 str 值展开，不影响 int/bool 等类型。
+    """
+    if isinstance(value, str):
+        return re.sub(
+            r'\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)',
+            lambda m: os.environ.get(m.group(1) or m.group(2), m.group(0)),
+            value,
+        )
+    if isinstance(value, dict):
+        return {k: _expand_env(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_expand_env(v) for v in value]
+    return value
 
 
 def _merge_values(values: list) -> Any:

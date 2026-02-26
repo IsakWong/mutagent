@@ -28,18 +28,21 @@ class Config(mutagent.Declaration):
     _layers: list  # list[tuple[Path, dict]]
 
     @classmethod
-    def load(cls, config_path: Path) -> Config:
-        """Scan config files from all levels and construct a Config object.
+    def load(cls, config_files: list[str | Path]) -> Config:
+        """从配置文件列表构建 Config 对象。
 
-        Priority: ./{config_path} > ~/{config_path}
+        文件按列表顺序加载，靠后的优先级更高。
+        不存在的文件自动跳过。
 
-        This is a plain classmethod (not an @impl stub) because it runs
-        during the bootstrap phase before builtins are loaded
-        
+        路径展开规则：
+        - "~" 前缀展开为用户目录（Path.home()）
+        - 相对路径相对于 cwd 展开
+        - 绝对路径不变
+
         Args:
-            config_path: Relative path to the config file (e.g. ".mutagent/config.json").
+            config_files: 配置文件路径列表（低优先级 → 高优先级）。
         """
-        return config_impl.load(cls, config_path)
+        return config_impl.load(cls, config_files)
 
     def get(self, path: str, default: Any = None, *, merge: bool = True) -> Any:
         """Get a configuration value by key path.
@@ -67,10 +70,12 @@ class Config(mutagent.Declaration):
                 If None, uses the default model.
 
         Returns:
-            A dict with at least ``base_url``, ``auth_token``, ``model_id``.
+            A dict with model configuration fields (e.g. ``provider``,
+            ``model_id``, ``base_url``, ``auth_token``).
+            Field validation is delegated to each Provider's ``from_config()``.
 
         Raises:
-            SystemExit: If the model is not found or auth_token is empty.
+            SystemExit: If the model is not found.
         """
         return config_impl.get_model(self, name)
 

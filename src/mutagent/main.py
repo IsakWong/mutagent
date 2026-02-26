@@ -68,7 +68,10 @@ def main() -> None:
     """Bootstrap mutagent.  Not overridable.
     """
     app = App()
-    app.load_config(".mutagent/config.json")
+    app.load_config([
+        "~/.mutagent/config.json",
+        ".mutagent/config.json",
+    ])
     app.run()
 
 
