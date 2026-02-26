@@ -3,7 +3,7 @@
 import json
 import logging
 import time
-from typing import Any, Iterator
+from typing import Any, AsyncIterator
 
 import mutagent
 from mutagent.client import LLMClient
@@ -13,13 +13,13 @@ logger = logging.getLogger(__name__)
 
 
 @mutagent.impl(LLMClient.send_message)
-def send_message(
+async def send_message(
     self: LLMClient,
     messages: list[Message],
     tools: list[ToolSchema],
     system_prompt: str = "",
     stream: bool = True,
-) -> Iterator[StreamEvent]:
+) -> AsyncIterator[StreamEvent]:
     """Send messages via provider and handle logging + recording."""
     logger.info(
         "Sending API request (model=%s, messages=%d)",
@@ -28,7 +28,7 @@ def send_message(
     t0 = time.monotonic()
 
     response_obj: Response | None = None
-    for event in self.provider.send(
+    async for event in self.provider.send(
         self.model, messages, tools, system_prompt, stream
     ):
         if event.type == "response_done":

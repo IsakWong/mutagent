@@ -1,7 +1,8 @@
 """mutagent.builtins.agent -- Agent main loop implementation."""
 
+import asyncio
 import logging
-from typing import Iterator
+from typing import AsyncIterator
 
 import mutagent
 from mutagent.agent import Agent
@@ -25,11 +26,11 @@ def _get_tool_capture_enabled(agent: Agent) -> bool:
 
 
 @mutagent.impl(Agent.run)
-def run(
-    self: Agent, input_stream: Iterator[InputEvent], stream: bool = True
-) -> Iterator[StreamEvent]:
+async def run(
+    self: Agent, input_stream: AsyncIterator[InputEvent], stream: bool = True
+) -> AsyncIterator[StreamEvent]:
     """Run the agent conversation loop, consuming input events and yielding output events."""
-    for input_event in input_stream:
+    async for input_event in input_stream:
         if input_event.type == "user_message":
             logger.info("User message received (%d chars)", len(input_event.text))
             self.messages.append(Message(role="user", content=input_event.text))
@@ -40,7 +41,7 @@ def run(
             while True:
                 response = None
                 got_error = False
-                for event in self.step(stream=stream):
+                async for event in self.step(stream=stream):
                     yield event
                     if event.type == "response_done":
                         response = event.response
@@ -76,7 +77,7 @@ def run(
                                     "Summarize your progress and what remains to be done.",
                         ))
                         # Final LLM call to get summary
-                        for event in self.step(stream=stream):
+                        async for event in self.step(stream=stream):
                             yield event
                             if event.type == "response_done" and event.response:
                                 self.messages.append(event.response.message)
@@ -105,7 +106,7 @@ def run(
                             buf: list[str] = []
                             token = _tool_log_buffer.set(buf)
                             try:
-                                result = self.tool_set.dispatch(call)
+                                result = await self.tool_set.dispatch(call)
                             finally:
                                 _tool_log_buffer.reset(token)
                             if buf:
@@ -115,7 +116,7 @@ def run(
                                     is_error=result.is_error,
                                 )
                         else:
-                            result = self.tool_set.dispatch(call)
+                            result = await self.tool_set.dispatch(call)
 
                         logger.info("Tool %s result: %s (%d chars)",
                                     call.name,
@@ -136,23 +137,24 @@ def run(
 
 
 @mutagent.impl(Agent.step)
-def step(
+async def step(
     self: Agent, stream: bool = True
-) -> Iterator[StreamEvent]:
+) -> AsyncIterator[StreamEvent]:
     """Execute a single LLM call, yielding streaming events."""
     tools = self.tool_set.get_tools()
-    yield from self.client.send_message(
+    async for event in self.client.send_message(
         self.messages, tools, system_prompt=self.system_prompt, stream=stream,
-    )
+    ):
+        yield event
 
 
 @mutagent.impl(Agent.handle_tool_calls)
-def handle_tool_calls(
+async def handle_tool_calls(
     self: Agent, tool_calls: list[ToolCall]
 ) -> list[ToolResult]:
     """Dispatch tool calls through the tool set."""
     results = []
     for call in tool_calls:
-        result = self.tool_set.dispatch(call)
+        result = await self.tool_set.dispatch(call)
         results.append(result)
     return results

@@ -114,9 +114,9 @@ class TestToolSetRemove:
     def test_remove_nonexistent(self, populated_set):
         assert populated_set.remove("nonexistent_tool") is False
 
-    def test_remove_then_dispatch_fails(self, populated_set):
+    async def test_remove_then_dispatch_fails(self, populated_set):
         populated_set.remove("Module-inspect")
-        result = populated_set.dispatch(
+        result = await populated_set.dispatch(
             ToolCall(id="tc_1", name="Module-inspect", arguments={})
         )
         assert result.is_error
@@ -155,30 +155,30 @@ class TestToolSetDispatch:
         yield ts
         mgr.cleanup()
 
-    def test_dispatch_inspect(self, tool_set):
-        result = tool_set.dispatch(
+    async def test_dispatch_inspect(self, tool_set):
+        result = await tool_set.dispatch(
             ToolCall(id="tc_1", name="Module-inspect", arguments={"module_path": "mutagent"})
         )
         assert not result.is_error
         assert "mutagent" in result.content
 
-    def test_dispatch_define(self, tool_set):
-        result = tool_set.dispatch(
+    async def test_dispatch_define(self, tool_set):
+        result = await tool_set.dispatch(
             ToolCall(id="tc_2", name="Module-define",
                      arguments={"module_path": "test_ts_dispatch.mod", "source": "x = 42\n"})
         )
         assert not result.is_error
         assert "OK" in result.content
 
-    def test_dispatch_unknown_tool(self, tool_set):
-        result = tool_set.dispatch(
+    async def test_dispatch_unknown_tool(self, tool_set):
+        result = await tool_set.dispatch(
             ToolCall(id="tc_3", name="nonexistent_tool", arguments={})
         )
         assert result.is_error
         assert "Unknown tool" in result.content
 
-    def test_dispatch_with_error(self, tool_set):
-        result = tool_set.dispatch(
+    async def test_dispatch_with_error(self, tool_set):
+        result = await tool_set.dispatch(
             ToolCall(id="tc_4", name="Module-save",
                      arguments={"module_path": "nonexistent.mod"})
         )
@@ -192,9 +192,9 @@ class TestToolSetEmptyState:
         ts = ToolSet()
         assert ts.get_tools() == []
 
-    def test_empty_dispatch_fails(self):
+    async def test_empty_dispatch_fails(self):
         ts = ToolSet()
-        result = ts.dispatch(ToolCall(id="tc_1", name="anything", arguments={}))
+        result = await ts.dispatch(ToolCall(id="tc_1", name="anything", arguments={}))
         assert result.is_error
 
     def test_empty_query_returns_none(self):
@@ -259,7 +259,7 @@ def _make_sub_agent(response_text="Sub-agent result"):
         stop_reason="end_turn",
     )
 
-    def mock_send(*args, **kwargs):
+    async def mock_send(*args, **kwargs):
         yield StreamEvent(type="text_delta", text=response_text)
         yield StreamEvent(type="response_done", response=response)
 
@@ -269,46 +269,47 @@ def _make_sub_agent(response_text="Sub-agent result"):
 
 class TestAgentToolkitDelegate:
 
-    def test_delegate_returns_sub_agent_result(self):
+    async def test_delegate_returns_sub_agent_result(self):
         sub = _make_sub_agent("Hello from sub-agent")
         dt = AgentToolkit(agents={"helper": sub})
-        result = dt.delegate(agent_name="helper", task="Say hello")
+        result = await dt.delegate(agent_name="helper", task="Say hello")
         assert result == "Hello from sub-agent"
 
-    def test_delegate_unknown_agent(self):
+    async def test_delegate_unknown_agent(self):
         dt = AgentToolkit(agents={})
-        result = dt.delegate(agent_name="nonexistent", task="Do something")
+        result = await dt.delegate(agent_name="nonexistent", task="Do something")
         assert "Unknown agent" in result
 
-    def test_delegate_clears_messages(self):
+    async def test_delegate_clears_messages(self):
         sub = _make_sub_agent("First response")
         dt = AgentToolkit(agents={"helper": sub})
 
         # First call
-        dt.delegate(agent_name="helper", task="First task")
+        await dt.delegate(agent_name="helper", task="First task")
         # After delegate, messages should contain the conversation
         assert len(sub.messages) > 0
 
         # Second call should clear messages first
-        sub.client.send_message = lambda *a, **k: iter([
-            StreamEvent(type="text_delta", text="Second response"),
-            StreamEvent(type="response_done", response=Response(
+        async def mock_send_2(*a, **k):
+            yield StreamEvent(type="text_delta", text="Second response")
+            yield StreamEvent(type="response_done", response=Response(
                 message=Message(role="assistant", content="Second response"),
                 stop_reason="end_turn",
-            )),
-        ])
-        result = dt.delegate(agent_name="helper", task="Second task")
+            ))
+
+        sub.client.send_message = mock_send_2
+        result = await dt.delegate(agent_name="helper", task="Second task")
         assert result == "Second response"
         # Messages should only contain conversation from second call
         user_msgs = [m for m in sub.messages if m.role == "user"]
         assert len(user_msgs) == 1
         assert user_msgs[0].content == "Second task"
 
-    def test_delegate_lists_available_agents(self):
+    async def test_delegate_lists_available_agents(self):
         sub1 = _make_sub_agent()
         sub2 = _make_sub_agent()
         dt = AgentToolkit(agents={"alpha": sub1, "beta": sub2})
-        result = dt.delegate(agent_name="unknown", task="test")
+        result = await dt.delegate(agent_name="unknown", task="test")
         assert "alpha" in result
         assert "beta" in result
 
@@ -325,7 +326,7 @@ class TestAgentToolkitDelegate:
 
 class TestAgentToolkitRegistration:
 
-    def test_register_delegate_in_tool_set(self):
+    async def test_register_delegate_in_tool_set(self):
         """AgentToolkit's delegate method can be registered in a ToolSet."""
         sub = _make_sub_agent("Result from sub")
         dt = AgentToolkit(agents={"helper": sub})
@@ -338,7 +339,7 @@ class TestAgentToolkitRegistration:
         assert schemas[0].name == "Agent-delegate"
 
         # Dispatch through ToolSet
-        result = ts.dispatch(
+        result = await ts.dispatch(
             ToolCall(id="tc_1", name="Agent-delegate",
                      arguments={"agent_name": "helper", "task": "Do something"})
         )
@@ -349,7 +350,7 @@ class TestAgentToolkitRegistration:
 class TestSystemAgentWithDelegate:
     """Integration test: System Agent delegates to Sub-Agent."""
 
-    def test_system_delegates_to_sub_agent(self):
+    async def test_system_delegates_to_sub_agent(self):
         # Create sub-agent
         sub = _make_sub_agent("Sub-agent completed the task")
 
@@ -398,7 +399,7 @@ class TestSystemAgentWithDelegate:
 
         call_idx = 0
 
-        def mock_send(*args, **kwargs):
+        async def mock_send(*args, **kwargs):
             nonlocal call_idx
             if call_idx == 0:
                 call_idx += 1
@@ -411,7 +412,12 @@ class TestSystemAgentWithDelegate:
         system_agent.client.send_message = mock_send
 
         # Run system agent
-        events = list(system_agent.run(iter([InputEvent(type="user_message", text="Do it")])))
+        async def input_stream():
+            yield InputEvent(type="user_message", text="Do it")
+
+        events = []
+        async for e in system_agent.run(input_stream()):
+            events.append(e)
         text_parts = [e.text for e in events if e.type == "text_delta"]
         text = "".join(text_parts)
 
@@ -483,7 +489,7 @@ class TestToolSetAutoDiscover:
         assert "_helper" not in names
         assert "WithPrivate-_helper" not in names
 
-    def test_auto_discover_dispatch_works(self, tool_set, mgr):
+    async def test_auto_discover_dispatch_works(self, tool_set, mgr):
         """Auto-discovered tools can be dispatched."""
         mgr.patch_module("test_discover.calc", (
             "import mutagent\n"
@@ -497,7 +503,7 @@ class TestToolSetAutoDiscover:
             "        '''\n"
             "        return str(a + b)\n"
         ))
-        result = tool_set.dispatch(
+        result = await tool_set.dispatch(
             ToolCall(id="tc_1", name="Calculator-add_numbers", arguments={"a": 3, "b": 4})
         )
         assert not result.is_error
@@ -510,7 +516,7 @@ class TestToolSetAutoDiscover:
         count = sum(1 for s in schemas if s.name == "Module-inspect")
         assert count == 1
 
-    def test_name_conflict_preserves_pre_registered(self, tool_set, mgr):
+    async def test_name_conflict_preserves_pre_registered(self, tool_set, mgr):
         """When auto-discovered tool name conflicts, pre-registered wins."""
         mgr.patch_module("test_discover.conflict", (
             "import mutagent\n"
@@ -523,7 +529,7 @@ class TestToolSetAutoDiscover:
         # Dispatch should use the pre-registered one, not the auto-discovered
         # Conflicting generates "Conflicting-inspect_module" which doesn't
         # conflict with "Module-inspect", so both should exist
-        result = tool_set.dispatch(
+        result = await tool_set.dispatch(
             ToolCall(id="tc_1", name="Module-inspect",
                      arguments={"module_path": "mutagent"})
         )
@@ -606,7 +612,7 @@ class TestToolSetLateBind:
         ts.add(tools)
         return ts
 
-    def test_late_binding_reflects_code_update(self, tool_set, mgr):
+    async def test_late_binding_reflects_code_update(self, tool_set, mgr):
         """After redefine, calling the tool uses updated code."""
         mgr.patch_module("test_late.tools", (
             "import mutagent\n"
@@ -617,7 +623,7 @@ class TestToolSetLateBind:
             "        return str(x * 2)\n"
         ))
         # First call: x * 2
-        result = tool_set.dispatch(
+        result = await tool_set.dispatch(
             ToolCall(id="tc_1", name="MyTools-compute", arguments={"x": 5})
         )
         assert result.content == "10"
@@ -632,7 +638,7 @@ class TestToolSetLateBind:
             "        return str(x * 3)\n"
         ))
         # Second call should use new code (via late binding)
-        result = tool_set.dispatch(
+        result = await tool_set.dispatch(
             ToolCall(id="tc_2", name="MyTools-compute", arguments={"x": 5})
         )
         assert result.content == "15"
@@ -701,7 +707,7 @@ class TestToolSetLateBind:
         assert "Shrinking-keep" in names
         assert "Shrinking-remove_me" not in names
 
-    def test_full_iteration_cycle(self, tool_set, mgr):
+    async def test_full_iteration_cycle(self, tool_set, mgr):
         """Full cycle: define → discover → call → redefine → call → verify."""
         # Step 1: Define
         mgr.patch_module("test_late.cycle", (
@@ -714,7 +720,7 @@ class TestToolSetLateBind:
         ))
 
         # Step 2: Discover + call
-        result = tool_set.dispatch(
+        result = await tool_set.dispatch(
             ToolCall(id="tc_1", name="CycleTool-process", arguments={"data": "hello"})
         )
         assert result.content == "HELLO"
@@ -730,7 +736,7 @@ class TestToolSetLateBind:
         ))
 
         # Step 4: Call again — should use new code
-        result = tool_set.dispatch(
+        result = await tool_set.dispatch(
             ToolCall(id="tc_2", name="CycleTool-process", arguments={"data": "hello"})
         )
         assert result.content == "olleh"
@@ -771,7 +777,7 @@ class TestToolNamingConvention:
         names = {s.name for s in ts.get_tools()}
         assert names == {"Greeter-say_hello"}
 
-    def test_dispatch_uses_prefixed_name(self):
+    async def test_dispatch_uses_prefixed_name(self):
         """dispatch() 必须使用前缀工具名。"""
         class WebToolkit(mutagent.Toolkit):
             def search(self, query: str) -> str:
@@ -780,13 +786,13 @@ class TestToolNamingConvention:
 
         ts = ToolSet()
         ts.add(WebToolkit())
-        result = ts.dispatch(
+        result = await ts.dispatch(
             ToolCall(id="tc_1", name="Web-search", arguments={"query": "python"})
         )
         assert not result.is_error
         assert "found: python" in result.content
 
-    def test_bare_method_name_dispatch_fails(self):
+    async def test_bare_method_name_dispatch_fails(self):
         """使用不带前缀的方法名 dispatch 会失败。"""
         class WebToolkit(mutagent.Toolkit):
             def search(self, query: str) -> str:
@@ -795,7 +801,7 @@ class TestToolNamingConvention:
 
         ts = ToolSet()
         ts.add(WebToolkit())
-        result = ts.dispatch(
+        result = await ts.dispatch(
             ToolCall(id="tc_1", name="search", arguments={"query": "test"})
         )
         assert result.is_error
@@ -898,7 +904,7 @@ class TestToolNamingAutoDiscover:
         ts.add(tools)
         return ts
 
-    def test_auto_discover_toolkit_suffix_stripped(self, tool_set, mgr):
+    async def test_auto_discover_toolkit_suffix_stripped(self, tool_set, mgr):
         """auto-discovery: 类名以 Toolkit 结尾时去掉后缀。"""
         mgr.patch_module("test_naming.web_discover", (
             "import mutagent\n"
@@ -916,7 +922,7 @@ class TestToolNamingAutoDiscover:
         names = {s.name for s in schemas}
         assert "WebDiscover-web_search" in names
 
-        result = tool_set.dispatch(
+        result = await tool_set.dispatch(
             ToolCall(id="tc_1", name="WebDiscover-web_search", arguments={"query": "test"})
         )
         assert not result.is_error
@@ -939,7 +945,7 @@ class TestToolNamingAutoDiscover:
         assert "Module-inspect" in names
         assert "Inspect-inspect_module" in names
 
-    def test_auto_discover_late_binding_with_prefix(self, tool_set, mgr):
+    async def test_auto_discover_late_binding_with_prefix(self, tool_set, mgr):
         """auto-discovered 前缀工具支持 late binding。"""
         mgr.patch_module("test_naming.late", (
             "import mutagent\n"
@@ -950,7 +956,7 @@ class TestToolNamingAutoDiscover:
             "        '''Compute.'''\n"
             "        return str(x * 2)\n"
         ))
-        result = tool_set.dispatch(
+        result = await tool_set.dispatch(
             ToolCall(id="tc_1", name="Calc-compute", arguments={"x": 5})
         )
         assert result.content == "10"
@@ -964,7 +970,7 @@ class TestToolNamingAutoDiscover:
             "        '''Compute.'''\n"
             "        return str(x * 3)\n"
         ))
-        result = tool_set.dispatch(
+        result = await tool_set.dispatch(
             ToolCall(id="tc_2", name="Calc-compute", arguments={"x": 5})
         )
         assert result.content == "15"

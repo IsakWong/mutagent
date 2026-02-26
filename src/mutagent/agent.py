@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, AsyncIterator
 
 import mutagent
 
@@ -35,19 +35,19 @@ class Agent(mutagent.Declaration):
     messages: list
     max_tool_rounds: int
 
-    def run(
-        self, input_stream: Iterator[InputEvent], stream: bool = True
-    ) -> Iterator[StreamEvent]:
+    async def run(
+        self, input_stream: AsyncIterator[InputEvent], stream: bool = True
+    ) -> AsyncIterator[StreamEvent]:
         """Run the agent conversation loop, consuming input events and yielding output events.
 
         This is the main entry point. It consumes InputEvents from input_stream,
         processes each through the LLM (with tool call loops), and yields
         StreamEvents for each piece of incremental output.
 
-        The generator runs until input_stream is exhausted.
+        The async generator runs until input_stream is exhausted.
 
         Args:
-            input_stream: Iterator of user input events.
+            input_stream: AsyncIterator of user input events.
             stream: Whether to use SSE streaming for the HTTP request.
 
         Yields:
@@ -56,7 +56,7 @@ class Agent(mutagent.Declaration):
         """
         return agent_impl.run(self, input_stream, stream=stream)
 
-    def step(self, stream: bool = True) -> Iterator[StreamEvent]:
+    async def step(self, stream: bool = True) -> AsyncIterator[StreamEvent]:
         """Execute a single LLM call, yielding streaming events.
 
         Args:
@@ -67,7 +67,7 @@ class Agent(mutagent.Declaration):
         """
         return agent_impl.step(self, stream=stream)
 
-    def handle_tool_calls(self, tool_calls: list[ToolCall]) -> list[ToolResult]:
+    async def handle_tool_calls(self, tool_calls: list[ToolCall]) -> list[ToolResult]:
         """Execute tool calls and return results.
 
         Args:
@@ -76,7 +76,7 @@ class Agent(mutagent.Declaration):
         Returns:
             List of tool results.
         """
-        return agent_impl.handle_tool_calls(self, tool_calls)
+        return await agent_impl.handle_tool_calls(self, tool_calls)
 
 
 from .builtins import agent_impl

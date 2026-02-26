@@ -2,9 +2,9 @@
 
 import json
 import logging
-from typing import Any, Iterator
+from typing import Any, AsyncIterator
 
-import requests
+import httpx
 
 from mutagent.messages import (
     Message,
@@ -40,14 +40,14 @@ class OpenAIProvider(LLMProvider):
             api_key=config["auth_token"],
         )
 
-    def send(
+    async def send(
         self,
         model: str,
         messages: list[Message],
         tools: list[ToolSchema],
         system_prompt: str = "",
         stream: bool = True,
-    ) -> Iterator[StreamEvent]:
+    ) -> AsyncIterator[StreamEvent]:
         """Send messages to OpenAI-compatible API and yield streaming events."""
         openai_messages = _messages_to_openai(messages)
         if system_prompt:
@@ -66,9 +66,11 @@ class OpenAIProvider(LLMProvider):
         }
 
         if stream:
-            yield from _send_stream(self.base_url, payload, headers)
+            async for event in _send_stream(self.base_url, payload, headers):
+                yield event
         else:
-            yield from _send_no_stream(self.base_url, payload, headers)
+            async for event in _send_no_stream(self.base_url, payload, headers):
+                yield event
 
 
 def _messages_to_openai(messages: list[Message]) -> list[dict[str, Any]]:
@@ -167,17 +169,18 @@ def _response_from_openai(data: dict[str, Any]) -> Response:
     return Response(message=message, stop_reason=stop_reason, usage=usage)
 
 
-def _send_no_stream(
+async def _send_no_stream(
     base_url: str,
     payload: dict[str, Any],
     headers: dict[str, str],
-) -> Iterator[StreamEvent]:
+) -> AsyncIterator[StreamEvent]:
     """Non-streaming path for OpenAI API."""
-    resp = requests.post(
-        f"{base_url}/chat/completions",
-        headers=headers,
-        json=payload,
-    )
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{base_url}/chat/completions",
+            headers=headers,
+            json=payload,
+        )
     data = resp.json()
     if resp.status_code != 200:
         error_msg = data.get("error", {}).get("message", json.dumps(data))
@@ -200,140 +203,140 @@ def _send_no_stream(
     yield StreamEvent(type="response_done", response=response)
 
 
-def _send_stream(
+async def _send_stream(
     base_url: str,
     payload: dict[str, Any],
     headers: dict[str, str],
-) -> Iterator[StreamEvent]:
+) -> AsyncIterator[StreamEvent]:
     """Streaming path: parse OpenAI SSE and yield StreamEvents."""
     payload["stream"] = True
     payload["stream_options"] = {"include_usage": True}
 
-    with requests.post(
-        f"{base_url}/chat/completions",
-        headers=headers,
-        json=payload,
-        stream=True,
-    ) as resp:
-        if resp.status_code != 200:
-            try:
-                data = resp.json()
-                error_msg = data.get("error", {}).get("message", json.dumps(data))
-            except Exception:
-                error_msg = f"HTTP {resp.status_code}"
-            logger.warning("OpenAI API stream error (%d): %s", resp.status_code, error_msg)
-            yield StreamEvent(
-                type="error",
-                error=f"OpenAI API error ({resp.status_code}): {error_msg}",
-            )
-            return
-
-        text_parts: list[str] = []
-        tool_calls: list[ToolCall] = []
-        # Track tool call state by index
-        tool_call_data: dict[int, dict[str, Any]] = {}
-        stop_reason = ""
-        usage: dict[str, int] = {}
-        finish_reason = ""
-
-        for raw_line in resp.iter_lines():
-            line = raw_line.decode("utf-8", errors="replace")
-
-            if not line.startswith("data: "):
-                continue
-
-            data_str = line[6:]
-            if data_str == "[DONE]":
-                # Assemble final response
-                # Finalize any pending tool calls
-                for idx in sorted(tool_call_data.keys()):
-                    tc_info = tool_call_data[idx]
-                    json_str = tc_info.get("args_json", "")
-                    try:
-                        arguments = json.loads(json_str) if json_str else {}
-                    except json.JSONDecodeError:
-                        arguments = {}
-                    tool_calls.append(ToolCall(
-                        id=tc_info.get("id", ""),
-                        name=tc_info.get("name", ""),
-                        arguments=arguments,
-                    ))
-                    yield StreamEvent(type="tool_use_end")
-
-                # Map finish_reason
-                stop_reason_map = {
-                    "stop": "end_turn",
-                    "tool_calls": "tool_use",
-                    "length": "max_tokens",
-                }
-                stop_reason = stop_reason_map.get(finish_reason, finish_reason)
-
-                message = Message(
-                    role="assistant",
-                    content="".join(text_parts),
-                    tool_calls=tool_calls,
+    async with httpx.AsyncClient() as client:
+        async with client.stream(
+            "POST",
+            f"{base_url}/chat/completions",
+            headers=headers,
+            json=payload,
+        ) as resp:
+            if resp.status_code != 200:
+                body = await resp.aread()
+                try:
+                    data = json.loads(body)
+                    error_msg = data.get("error", {}).get("message", json.dumps(data))
+                except Exception:
+                    error_msg = f"HTTP {resp.status_code}"
+                logger.warning("OpenAI API stream error (%d): %s", resp.status_code, error_msg)
+                yield StreamEvent(
+                    type="error",
+                    error=f"OpenAI API error ({resp.status_code}): {error_msg}",
                 )
-                response = Response(
-                    message=message,
-                    stop_reason=stop_reason,
-                    usage=usage,
-                )
-                yield StreamEvent(type="response_done", response=response)
-                break
+                return
 
-            try:
-                data = json.loads(data_str)
-            except json.JSONDecodeError:
-                continue
+            text_parts: list[str] = []
+            tool_calls: list[ToolCall] = []
+            # Track tool call state by index
+            tool_call_data: dict[int, dict[str, Any]] = {}
+            stop_reason = ""
+            usage: dict[str, int] = {}
+            finish_reason = ""
 
-            # Usage chunk (with stream_options.include_usage)
-            if data.get("usage"):
-                usage_data = data["usage"]
-                if "prompt_tokens" in usage_data:
-                    usage["input_tokens"] = usage_data["prompt_tokens"]
-                if "completion_tokens" in usage_data:
-                    usage["output_tokens"] = usage_data["completion_tokens"]
+            async for raw_line in resp.aiter_lines():
+                line = raw_line
 
-            choices = data.get("choices", [])
-            if not choices:
-                continue
+                if not line.startswith("data: "):
+                    continue
 
-            delta = choices[0].get("delta", {})
-            fr = choices[0].get("finish_reason")
-            if fr:
-                finish_reason = fr
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    # Assemble final response
+                    # Finalize any pending tool calls
+                    for idx in sorted(tool_call_data.keys()):
+                        tc_info = tool_call_data[idx]
+                        json_str = tc_info.get("args_json", "")
+                        try:
+                            arguments = json.loads(json_str) if json_str else {}
+                        except json.JSONDecodeError:
+                            arguments = {}
+                        tool_calls.append(ToolCall(
+                            id=tc_info.get("id", ""),
+                            name=tc_info.get("name", ""),
+                            arguments=arguments,
+                        ))
+                        yield StreamEvent(type="tool_use_end")
 
-            # Text content
-            content = delta.get("content")
-            if content:
-                text_parts.append(content)
-                yield StreamEvent(type="text_delta", text=content)
-
-            # Tool calls
-            for tc_delta in delta.get("tool_calls", []):
-                idx = tc_delta.get("index", 0)
-                if idx not in tool_call_data:
-                    # New tool call
-                    func = tc_delta.get("function", {})
-                    tool_call_data[idx] = {
-                        "id": tc_delta.get("id", ""),
-                        "name": func.get("name", ""),
-                        "args_json": func.get("arguments", ""),
+                    # Map finish_reason
+                    stop_reason_map = {
+                        "stop": "end_turn",
+                        "tool_calls": "tool_use",
+                        "length": "max_tokens",
                     }
-                    tc = ToolCall(
-                        id=tc_delta.get("id", ""),
-                        name=func.get("name", ""),
+                    stop_reason = stop_reason_map.get(finish_reason, finish_reason)
+
+                    message = Message(
+                        role="assistant",
+                        content="".join(text_parts),
+                        tool_calls=tool_calls,
                     )
-                    yield StreamEvent(type="tool_use_start", tool_call=tc)
-                else:
-                    # Delta for existing tool call
-                    func = tc_delta.get("function", {})
-                    args_chunk = func.get("arguments", "")
-                    if args_chunk:
-                        tool_call_data[idx]["args_json"] += args_chunk
-                        yield StreamEvent(
-                            type="tool_use_delta",
-                            tool_json_delta=args_chunk,
+                    response = Response(
+                        message=message,
+                        stop_reason=stop_reason,
+                        usage=usage,
+                    )
+                    yield StreamEvent(type="response_done", response=response)
+                    break
+
+                try:
+                    data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                # Usage chunk (with stream_options.include_usage)
+                if data.get("usage"):
+                    usage_data = data["usage"]
+                    if "prompt_tokens" in usage_data:
+                        usage["input_tokens"] = usage_data["prompt_tokens"]
+                    if "completion_tokens" in usage_data:
+                        usage["output_tokens"] = usage_data["completion_tokens"]
+
+                choices = data.get("choices", [])
+                if not choices:
+                    continue
+
+                delta = choices[0].get("delta", {})
+                fr = choices[0].get("finish_reason")
+                if fr:
+                    finish_reason = fr
+
+                # Text content
+                content = delta.get("content")
+                if content:
+                    text_parts.append(content)
+                    yield StreamEvent(type="text_delta", text=content)
+
+                # Tool calls
+                for tc_delta in delta.get("tool_calls", []):
+                    idx = tc_delta.get("index", 0)
+                    if idx not in tool_call_data:
+                        # New tool call
+                        func = tc_delta.get("function", {})
+                        tool_call_data[idx] = {
+                            "id": tc_delta.get("id", ""),
+                            "name": func.get("name", ""),
+                            "args_json": func.get("arguments", ""),
+                        }
+                        tc = ToolCall(
+                            id=tc_delta.get("id", ""),
+                            name=func.get("name", ""),
                         )
-
-
+                        yield StreamEvent(type="tool_use_start", tool_call=tc)
+                    else:
+                        # Delta for existing tool call
+                        func = tc_delta.get("function", {})
+                        args_chunk = func.get("arguments", "")
+                        if args_chunk:
+                            tool_call_data[idx]["args_json"] += args_chunk
+                            yield StreamEvent(
+                                type="tool_use_delta",
+                                tool_json_delta=args_chunk,
+                            )

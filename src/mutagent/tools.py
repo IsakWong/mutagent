@@ -92,7 +92,7 @@ class ToolSet(mutagent.Declaration):
         """
         return tool_set_impl.get_tools(self)
 
-    def dispatch(self, tool_call: ToolCall) -> ToolResult:
+    async def dispatch(self, tool_call: ToolCall) -> ToolResult:
         """Dispatch a tool call to the corresponding implementation.
 
         Args:
@@ -101,7 +101,7 @@ class ToolSet(mutagent.Declaration):
         Returns:
             The result of executing the tool.
         """
-        return tool_set_impl.dispatch(self, tool_call)
+        return await tool_set_impl.dispatch(self, tool_call)
 
 
 class Toolkit(mutagent.Declaration):

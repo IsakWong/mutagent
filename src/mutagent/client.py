@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 import mutagent
 
@@ -32,13 +32,13 @@ class LLMClient(mutagent.Declaration):
     model: str
     api_recorder: ApiRecorder | None = None
 
-    def send_message(
+    async def send_message(
         self,
         messages: list[Message],
         tools: list[ToolSchema],
         system_prompt: str = "",
         stream: bool = True,
-    ) -> Iterator[StreamEvent]:
+    ) -> AsyncIterator[StreamEvent]:
         """Send messages to the LLM and yield streaming events.
 
         Delegates to provider.send() and handles API recording.

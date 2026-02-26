@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from typing import AsyncIterator
 
 import mutobj
 
@@ -45,8 +46,8 @@ def _create_test_agent(
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _single_input(text: str):
-    """Create an iterator yielding a single user_message InputEvent."""
+async def _single_input(text: str) -> AsyncIterator[InputEvent]:
+    """Create an async iterator yielding a single user_message InputEvent."""
     yield InputEvent(type="user_message", text=text)
 
 
@@ -63,11 +64,11 @@ def _events_for(response: Response) -> list[StreamEvent]:
 
 
 def _make_mock_send(responses: list[Response]):
-    """Create a mock send_message generator from a list of Responses."""
+    """Create a mock async generator send_message from a list of Responses."""
     event_lists = [_events_for(r) for r in responses]
     call_idx = 0
 
-    def mock_send(*args, **kwargs):
+    async def mock_send(*args, **kwargs):
         nonlocal call_idx
         evts = event_lists[call_idx]
         call_idx += 1
@@ -77,10 +78,10 @@ def _make_mock_send(responses: list[Response]):
     return mock_send
 
 
-def _collect_text(iter) -> str:
+async def _collect_text(aiter: AsyncIterator[StreamEvent]) -> str:
     """Collect text from text_delta events."""
     parts = []
-    for event in iter:
+    async for event in aiter:
         if event.type == "text_delta":
             parts.append(event.text)
     return "".join(parts)
@@ -114,7 +115,7 @@ class TestEndToEnd:
         agent = _create_test_agent(api_key="test-key")
         yield agent
 
-    def test_inspect_then_patch_then_save(self, agent, tmp_path):
+    async def test_inspect_then_patch_then_save(self, agent, tmp_path):
         """Simulate: Agent inspects module -> patches code -> saves."""
         # Step 1: LLM asks to inspect a module
         inspect_response = Response(
@@ -180,7 +181,7 @@ class TestEndToEnd:
             final_response,
         ])
 
-        result = _collect_text(agent.run(_single_input("Create a helper module with an add function")))
+        result = await _collect_text(agent.run(_single_input("Create a helper module with an add function")))
 
         # Verify final result
         assert "Done" in result
@@ -208,7 +209,7 @@ class TestEndToEnd:
         import shutil
         shutil.rmtree(Path.cwd() / ".mutagent" / "test_e2e", ignore_errors=True)
 
-    def test_view_source_of_patched_module(self, agent):
+    async def test_view_source_of_patched_module(self, agent):
         """Agent patches a module then views its source."""
         # Patch
         patch_resp = Response(
@@ -248,14 +249,14 @@ class TestEndToEnd:
 
         agent.client.send_message = _make_mock_send([patch_resp, view_resp, final_resp])
 
-        result = _collect_text(agent.run(_single_input("Show me the Greeter class")))
+        result = await _collect_text(agent.run(_single_input("Show me the Greeter class")))
 
         # Verify view_source returned the source
         view_result = agent.messages[4].tool_results[0]
         assert "class Greeter" in view_result.content
         assert "return 'hi'" in view_result.content
 
-    def test_simple_chat_no_tools(self, agent):
+    async def test_simple_chat_no_tools(self, agent):
         """Agent can respond without using any tools."""
         response = Response(
             message=Message(role="assistant", content="Hello! I'm mutagent."),
@@ -263,7 +264,7 @@ class TestEndToEnd:
         )
         agent.client.send_message = _make_mock_send([response])
 
-        result = _collect_text(agent.run(_single_input("Hello")))
+        result = await _collect_text(agent.run(_single_input("Hello")))
         assert result == "Hello! I'm mutagent."
         assert len(agent.messages) == 2
 
@@ -303,7 +304,7 @@ class TestSelfEvolution:
             code = compile(source, str(tool_set_impl_path), "exec")
             exec(code, mod.__dict__)
 
-    def test_create_tool_and_use_it(self, agent):
+    async def test_create_tool_and_use_it(self, agent):
         """Self-evolution: Agent creates a new tool class, patches ToolSet, then uses it."""
         # Step 1: Agent creates a new tool class declaration
         create_decl_resp = Response(
@@ -382,7 +383,7 @@ class TestSelfEvolution:
                             "    return schemas\n"
                             "\n"
                             "@mutagent.impl(ToolSet.dispatch)\n"
-                            "def dispatch(self, tool_call):\n"
+                            "async def dispatch(self, tool_call):\n"
                             "    entries = getattr(self, '_entries', {})\n"
                             "    entry = entries.get(tool_call.name)\n"
                             "    if entry is not None:\n"
@@ -439,7 +440,7 @@ class TestSelfEvolution:
             final_resp,
         ])
 
-        result = _collect_text(agent.run(_single_input("Create a factorial tool and use it")))
+        result = await _collect_text(agent.run(_single_input("Create a factorial tool and use it")))
 
         # Verify the full workflow completed
         assert "720" in result

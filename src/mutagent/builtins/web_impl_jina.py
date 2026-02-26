@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from urllib.parse import quote
 
-import requests
+import httpx
 
 import mutagent
 from mutagent.toolkits.web_toolkit import WebToolkit
@@ -30,18 +30,19 @@ def _get_headers(toolkit: WebToolkit) -> dict[str, str]:
 
 
 @mutagent.impl(WebToolkit.search)
-def search(self: WebToolkit, query: str, max_results: int = 5) -> str:
+async def search(self: WebToolkit, query: str, max_results: int = 5) -> str:
     """搜索 Web 并返回结果摘要。"""
     encoded_query = quote(query)
     url = f"{_SEARCH_API}{encoded_query}"
     headers = _get_headers(self)
 
     try:
-        resp = requests.get(url, headers=headers, timeout=_TIMEOUT)
-        resp.raise_for_status()
-    except requests.Timeout:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, headers=headers, timeout=_TIMEOUT)
+            resp.raise_for_status()
+    except httpx.TimeoutException:
         return f"搜索超时（{_TIMEOUT}s）。请稍后重试。"
-    except requests.RequestException as exc:
+    except httpx.HTTPError as exc:
         logger.warning("Web search failed: %s", exc)
         return f"搜索失败：{exc}"
 
@@ -73,17 +74,18 @@ def search(self: WebToolkit, query: str, max_results: int = 5) -> str:
 
 
 @mutagent.impl(WebToolkit.fetch)
-def fetch(self: WebToolkit, url: str) -> str:
+async def fetch(self: WebToolkit, url: str) -> str:
     """读取网页内容并返回文本。"""
     reader_url = f"{_READER_API}{url}"
     headers = _get_headers(self)
 
     try:
-        resp = requests.get(reader_url, headers=headers, timeout=_TIMEOUT)
-        resp.raise_for_status()
-    except requests.Timeout:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(reader_url, headers=headers, timeout=_TIMEOUT)
+            resp.raise_for_status()
+    except httpx.TimeoutException:
         return f"读取超时（{_TIMEOUT}s）。请稍后重试。"
-    except requests.RequestException as exc:
+    except httpx.HTTPError as exc:
         logger.warning("Web fetch failed for %s: %s", url, exc)
         return f"读取失败：{exc}"
 

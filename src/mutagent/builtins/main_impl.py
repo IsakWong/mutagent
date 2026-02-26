@@ -328,15 +328,80 @@ def run(self) -> None:
     self.setup_agent(system_prompt=SYSTEM_PROMPT)
     model = self.config.get_model()
     print(f"mutagent ready  (model: {model.get('model_id', '?')})")
-    print("Type your message. Ctrl+C to exit.\n")
+    print("Type your message. 'exit' or Ctrl+C to quit.\n")
+
+    import asyncio
+    import queue
+    import threading
+    from mutagent.messages import InputEvent, StreamEvent
+
+    # 启动 asyncio event loop 线程
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+    loop_thread.start()
+
+    event_q: queue.Queue[StreamEvent | None] = queue.Queue()
+    future: asyncio.Future | None = None
+
+    waiting_for_input = True  # True when blocked on read_input()
 
     while True:
         try:
-            for event in self.agent.run(self.userio.input_stream()):
+            waiting_for_input = True
+            user_input = self.userio.read_input()
+            waiting_for_input = False
+
+            if not user_input:
+                continue
+
+            # exit / /exit 直接退出
+            if user_input in ("exit", "/exit"):
+                break
+
+            # 构造 async input source（单条消息）
+            async def single_input(text=user_input):
+                yield InputEvent(type="user_message", text=text)
+
+            # 提交 agent 任务到 asyncio 线程
+            async def run_agent(input_gen=single_input()):
+                async for event in self.agent.run(input_gen):
+                    event_q.put(event)
+                event_q.put(None)  # sentinel
+
+            future = asyncio.run_coroutine_threadsafe(run_agent(), loop)
+
+            # 主线程同步消费事件
+            for event in iter(event_q.get, None):
                 self.userio.render_event(event)
-            # End session
-            break
+
         except KeyboardInterrupt:
-            print("\n[User interrupted]")
+            if waiting_for_input:
+                # 空输入时 Ctrl+C：询问是否退出
+                if self.userio.confirm_exit():
+                    break
+            else:
+                # agent 运行中 Ctrl+C：取消当前任务
+                if future is not None and not future.done():
+                    future.cancel()
+                    # 排空 event_q
+                    try:
+                        while True:
+                            event_q.get_nowait()
+                    except queue.Empty:
+                        pass
+                print("\n[User interrupted]")
+        except EOFError:
+            # Ctrl+D (Unix) / Ctrl+Z (Windows)
+            break
         except Exception as e:
             print(f"\n[Error: {e}]", file=sys.stderr, flush=True)
+
+    # 清理 event loop：取消运行中的任务 → 关闭异步生成器 → 停止循环
+    if future is not None and not future.done():
+        future.cancel()
+    try:
+        asyncio.run_coroutine_threadsafe(loop.shutdown_asyncgens(), loop).result(timeout=2)
+    except Exception:
+        pass
+    loop.call_soon_threadsafe(loop.stop)
+    loop_thread.join(timeout=2)

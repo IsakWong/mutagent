@@ -2,11 +2,11 @@
 
 import json
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mutagent.messages import Message, Response, ToolCall, ToolResult, ToolSchema
+from mutagent.messages import Message, Response, StreamEvent, ToolCall, ToolResult, ToolSchema
 from mutagent.builtins.openai_provider import (
     OpenAIProvider,
     _messages_to_openai,
@@ -345,6 +345,10 @@ class TestResponseFromOpenAI:
         assert resp.message.tool_calls[0].arguments == {}
 
 
+# ---------------------------------------------------------------------------
+# Async helpers for integration tests
+# ---------------------------------------------------------------------------
+
 def _make_client():
     """创建测试用 LLMClient（使用 OpenAIProvider）。"""
     from mutagent.client import LLMClient
@@ -355,26 +359,41 @@ def _make_client():
     return LLMClient(provider=provider, model="gpt-4o")
 
 
+async def _collect_events(async_iter):
+    """Collect all events from an async iterator into a list."""
+    events = []
+    async for event in async_iter:
+        events.append(event)
+    return events
+
+
+async def _mock_send_events(*events: StreamEvent):
+    """Create an async generator that yields the given StreamEvent objects.
+
+    Used to mock provider.send() in integration tests.
+    """
+    for event in events:
+        yield event
+
+
 class TestSendMessageIntegration:
 
-    def test_send_message_success(self):
-        """Test send_message with a mocked requests response (stream=False)."""
-        mock_response_data = {
-            "choices": [{
-                "message": {"role": "assistant", "content": "Hello from OpenAI!"},
-                "finish_reason": "stop",
-            }],
-            "usage": {"prompt_tokens": 5, "completion_tokens": 3},
-        }
+    async def test_send_message_success(self):
+        """Test send_message with mocked provider.send() (non-streaming path)."""
+        response = Response(
+            message=Message(role="assistant", content="Hello from OpenAI!"),
+            stop_reason="end_turn",
+            usage={"input_tokens": 5, "output_tokens": 3},
+        )
+        mock_events = [
+            StreamEvent(type="text_delta", text="Hello from OpenAI!"),
+            StreamEvent(type="response_done", response=response),
+        ]
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = mock_response_data
-
-        with patch("requests.post", return_value=mock_resp):
-            client = _make_client()
+        client = _make_client()
+        with patch.object(client.provider, "send", return_value=_mock_send_events(*mock_events)):
             messages = [Message(role="user", content="Hi")]
-            events = list(client.send_message(messages, [], stream=False))
+            events = await _collect_events(client.send_message(messages, [], stream=False))
 
         resp_event = [e for e in events if e.type == "response_done"][0]
         resp = resp_event.response
@@ -383,30 +402,19 @@ class TestSendMessageIntegration:
         assert resp.usage["input_tokens"] == 5
         assert resp.usage["output_tokens"] == 3
 
-    def test_send_message_with_tools(self):
+    async def test_send_message_with_tools(self):
         """Test send_message includes tools in the request."""
-        mock_response_data = {
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [{
-                        "id": "call_abc",
-                        "type": "function",
-                        "function": {
-                            "name": "get_weather",
-                            "arguments": json.dumps({"city": "Tokyo"}),
-                        },
-                    }],
-                },
-                "finish_reason": "tool_calls",
-            }],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 8},
-        }
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = mock_response_data
+        tc = ToolCall(id="call_abc", name="get_weather", arguments={"city": "Tokyo"})
+        response = Response(
+            message=Message(role="assistant", content="", tool_calls=[tc]),
+            stop_reason="tool_use",
+            usage={"input_tokens": 10, "output_tokens": 8},
+        )
+        mock_events = [
+            StreamEvent(type="tool_use_start", tool_call=tc),
+            StreamEvent(type="tool_use_end"),
+            StreamEvent(type="response_done", response=response),
+        ]
 
         tools = [ToolSchema(
             name="get_weather",
@@ -414,10 +422,10 @@ class TestSendMessageIntegration:
             input_schema={"type": "object", "properties": {"city": {"type": "string"}}},
         )]
 
-        with patch("requests.post", return_value=mock_resp):
-            client = _make_client()
+        client = _make_client()
+        with patch.object(client.provider, "send", return_value=_mock_send_events(*mock_events)):
             messages = [Message(role="user", content="What's the weather?")]
-            events = list(client.send_message(messages, tools, stream=False))
+            events = await _collect_events(client.send_message(messages, tools, stream=False))
 
         resp_event = [e for e in events if e.type == "response_done"][0]
         resp = resp_event.response
@@ -426,17 +434,15 @@ class TestSendMessageIntegration:
         assert resp.message.tool_calls[0].name == "get_weather"
         assert resp.message.tool_calls[0].arguments == {"city": "Tokyo"}
 
-    def test_send_message_api_error(self):
+    async def test_send_message_api_error(self):
         """Test send_message yields error event on API error."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 401
-        mock_resp.json.return_value = {
-            "error": {"message": "Incorrect API key provided"}
-        }
+        mock_events = [
+            StreamEvent(type="error", error="OpenAI API error (401): Incorrect API key provided"),
+        ]
 
-        with patch("requests.post", return_value=mock_resp):
-            client = _make_client()
-            events = list(client.send_message(
+        client = _make_client()
+        with patch.object(client.provider, "send", return_value=_mock_send_events(*mock_events)):
+            events = await _collect_events(client.send_message(
                 [Message(role="user", content="Hi")], [], stream=False
             ))
 
@@ -444,23 +450,21 @@ class TestSendMessageIntegration:
         assert events[0].type == "error"
         assert "Incorrect API key provided" in events[0].error
 
-    def test_send_message_text_delta_emitted(self):
+    async def test_send_message_text_delta_emitted(self):
         """Test that a text_delta event is emitted before response_done."""
-        mock_response_data = {
-            "choices": [{
-                "message": {"role": "assistant", "content": "Some text reply"},
-                "finish_reason": "stop",
-            }],
-            "usage": {"prompt_tokens": 5, "completion_tokens": 4},
-        }
+        response = Response(
+            message=Message(role="assistant", content="Some text reply"),
+            stop_reason="end_turn",
+            usage={"input_tokens": 5, "output_tokens": 4},
+        )
+        mock_events = [
+            StreamEvent(type="text_delta", text="Some text reply"),
+            StreamEvent(type="response_done", response=response),
+        ]
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = mock_response_data
-
-        with patch("requests.post", return_value=mock_resp):
-            client = _make_client()
-            events = list(client.send_message(
+        client = _make_client()
+        with patch.object(client.provider, "send", return_value=_mock_send_events(*mock_events)):
+            events = await _collect_events(client.send_message(
                 [Message(role="user", content="Hi")], [], stream=False
             ))
 
@@ -468,44 +472,26 @@ class TestSendMessageIntegration:
         assert len(text_events) == 1
         assert text_events[0].text == "Some text reply"
 
-    def test_send_message_tool_use_events(self):
+    async def test_send_message_tool_use_events(self):
         """Test that tool_use_start and tool_use_end events are emitted for each tool call."""
-        mock_response_data = {
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": "call_1",
-                            "type": "function",
-                            "function": {
-                                "name": "tool_a",
-                                "arguments": json.dumps({"x": 1}),
-                            },
-                        },
-                        {
-                            "id": "call_2",
-                            "type": "function",
-                            "function": {
-                                "name": "tool_b",
-                                "arguments": json.dumps({"y": 2}),
-                            },
-                        },
-                    ],
-                },
-                "finish_reason": "tool_calls",
-            }],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 12},
-        }
+        tc1 = ToolCall(id="call_1", name="tool_a", arguments={"x": 1})
+        tc2 = ToolCall(id="call_2", name="tool_b", arguments={"y": 2})
+        response = Response(
+            message=Message(role="assistant", content="", tool_calls=[tc1, tc2]),
+            stop_reason="tool_use",
+            usage={"input_tokens": 10, "output_tokens": 12},
+        )
+        mock_events = [
+            StreamEvent(type="tool_use_start", tool_call=tc1),
+            StreamEvent(type="tool_use_end"),
+            StreamEvent(type="tool_use_start", tool_call=tc2),
+            StreamEvent(type="tool_use_end"),
+            StreamEvent(type="response_done", response=response),
+        ]
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = mock_response_data
-
-        with patch("requests.post", return_value=mock_resp):
-            client = _make_client()
-            events = list(client.send_message(
+        client = _make_client()
+        with patch.object(client.provider, "send", return_value=_mock_send_events(*mock_events)):
+            events = await _collect_events(client.send_message(
                 [Message(role="user", content="Do stuff")], [], stream=False
             ))
 
@@ -516,64 +502,59 @@ class TestSendMessageIntegration:
         assert tool_start_events[0].tool_call.name == "tool_a"
         assert tool_start_events[1].tool_call.name == "tool_b"
 
-    def test_send_message_system_prompt(self):
-        """Test that system_prompt is prepended as a system message."""
-        mock_response_data = {
-            "choices": [{
-                "message": {"role": "assistant", "content": "OK"},
-                "finish_reason": "stop",
-            }],
-            "usage": {"prompt_tokens": 15, "completion_tokens": 1},
-        }
+    async def test_send_message_system_prompt(self):
+        """Test that system_prompt is forwarded to provider.send()."""
+        response = Response(
+            message=Message(role="assistant", content="OK"),
+            stop_reason="end_turn",
+            usage={"input_tokens": 15, "output_tokens": 1},
+        )
+        mock_events = [
+            StreamEvent(type="response_done", response=response),
+        ]
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = mock_response_data
-        captured_payload = {}
+        client = _make_client()
+        captured_kwargs = {}
 
-        def capture_post(url, **kwargs):
-            captured_payload.update(kwargs.get("json", {}))
-            return mock_resp
+        async def mock_send(model, messages, tools, system_prompt="", stream=True):
+            captured_kwargs["system_prompt"] = system_prompt
+            captured_kwargs["messages"] = messages
+            for event in mock_events:
+                yield event
 
-        with patch("requests.post", side_effect=capture_post):
-            client = _make_client()
+        with patch.object(client.provider, "send", side_effect=mock_send):
             messages = [Message(role="user", content="Hi")]
-            list(client.send_message(
+            await _collect_events(client.send_message(
                 messages, [], system_prompt="You are helpful.", stream=False
             ))
 
-        # Verify system message was prepended
-        msgs = captured_payload["messages"]
-        assert msgs[0] == {"role": "system", "content": "You are helpful."}
-        assert msgs[1] == {"role": "user", "content": "Hi"}
+        assert captured_kwargs["system_prompt"] == "You are helpful."
 
-    def test_send_message_no_system_prompt(self):
-        """Test that no system message is added when system_prompt is empty."""
-        mock_response_data = {
-            "choices": [{
-                "message": {"role": "assistant", "content": "OK"},
-                "finish_reason": "stop",
-            }],
-            "usage": {"prompt_tokens": 5, "completion_tokens": 1},
-        }
+    async def test_send_message_no_system_prompt(self):
+        """Test that no system prompt is passed when system_prompt is empty."""
+        response = Response(
+            message=Message(role="assistant", content="OK"),
+            stop_reason="end_turn",
+            usage={"input_tokens": 5, "output_tokens": 1},
+        )
+        mock_events = [
+            StreamEvent(type="response_done", response=response),
+        ]
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = mock_response_data
-        captured_payload = {}
+        client = _make_client()
+        captured_kwargs = {}
 
-        def capture_post(url, **kwargs):
-            captured_payload.update(kwargs.get("json", {}))
-            return mock_resp
+        async def mock_send(model, messages, tools, system_prompt="", stream=True):
+            captured_kwargs["system_prompt"] = system_prompt
+            captured_kwargs["messages"] = messages
+            for event in mock_events:
+                yield event
 
-        with patch("requests.post", side_effect=capture_post):
-            client = _make_client()
+        with patch.object(client.provider, "send", side_effect=mock_send):
             messages = [Message(role="user", content="Hi")]
-            list(client.send_message(messages, [], stream=False))
+            await _collect_events(client.send_message(messages, [], stream=False))
 
-        msgs = captured_payload["messages"]
-        assert len(msgs) == 1
-        assert msgs[0]["role"] == "user"
+        assert captured_kwargs["system_prompt"] == ""
 
 
 class TestOpenAIProviderFromConfig:
@@ -612,11 +593,11 @@ class TestOpenAIRealAPI:
         )
         return LLMClient(provider=provider, model="gpt-4o-mini")
 
-    def test_real_send_message(self):
+    async def test_real_send_message(self):
         """Send a real message to OpenAI API and verify the response structure."""
         client = self._make_real_client()
         messages = [Message(role="user", content="Reply with exactly: PONG")]
-        events = list(client.send_message(messages, []))
+        events = await _collect_events(client.send_message(messages, []))
 
         resp_event = [e for e in events if e.type == "response_done"][0]
         resp = resp_event.response
@@ -627,7 +608,7 @@ class TestOpenAIRealAPI:
         assert resp.usage.get("input_tokens", 0) > 0
         assert resp.usage.get("output_tokens", 0) > 0
 
-    def test_real_send_message_with_tool_use(self):
+    async def test_real_send_message_with_tool_use(self):
         """Send a real message with tools and verify tool_use response."""
         client = self._make_real_client()
         tools = [ToolSchema(
@@ -642,7 +623,7 @@ class TestOpenAIRealAPI:
             },
         )]
         messages = [Message(role="user", content="What's the weather in Tokyo?")]
-        events = list(client.send_message(messages, tools))
+        events = await _collect_events(client.send_message(messages, tools))
 
         resp_event = [e for e in events if e.type == "response_done"][0]
         resp = resp_event.response

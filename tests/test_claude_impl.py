@@ -2,11 +2,11 @@
 
 import json
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mutagent.messages import Message, Response, ToolCall, ToolResult, ToolSchema
+from mutagent.messages import Message, Response, StreamEvent, ToolCall, ToolResult, ToolSchema
 from mutagent.builtins.anthropic_provider import (
     AnthropicProvider,
     _messages_to_claude,
@@ -200,48 +200,51 @@ def _make_client():
     return LLMClient(provider=provider, model="claude-sonnet-4-20250514")
 
 
+async def _async_events(*events: StreamEvent):
+    """Helper: yield StreamEvent objects as an async iterator."""
+    for event in events:
+        yield event
+
+
 class TestSendMessageIntegration:
 
-    def test_send_message_success(self):
-        """Test send_message with a mocked requests response (stream=False)."""
-        mock_response_data = {
-            "content": [{"type": "text", "text": "Hello from Claude!"}],
-            "stop_reason": "end_turn",
-            "usage": {"input_tokens": 5, "output_tokens": 3},
-        }
+    async def test_send_message_success(self):
+        """Test send_message with provider.send() returning text response events."""
+        response = Response(
+            message=Message(role="assistant", content="Hello from Claude!"),
+            stop_reason="end_turn",
+            usage={"input_tokens": 5, "output_tokens": 3},
+        )
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = mock_response_data
+        mock_events = _async_events(
+            StreamEvent(type="text_delta", text="Hello from Claude!"),
+            StreamEvent(type="response_done", response=response),
+        )
 
-        with patch("requests.post", return_value=mock_resp):
-            client = _make_client()
+        client = _make_client()
+        with patch.object(client.provider, "send", return_value=mock_events):
             messages = [Message(role="user", content="Hi")]
-            events = list(client.send_message(messages, [], stream=False))
+            events = [e async for e in client.send_message(messages, [], stream=False)]
 
         resp_event = [e for e in events if e.type == "response_done"][0]
         resp = resp_event.response
         assert resp.message.content == "Hello from Claude!"
         assert resp.stop_reason == "end_turn"
 
-    def test_send_message_with_tools(self):
-        """Test send_message includes tools in the request."""
-        mock_response_data = {
-            "content": [
-                {
-                    "type": "tool_use",
-                    "id": "toolu_abc",
-                    "name": "Module-view_source",
-                    "input": {"target": "mutagent"},
-                }
-            ],
-            "stop_reason": "tool_use",
-            "usage": {"input_tokens": 10, "output_tokens": 8},
-        }
+    async def test_send_message_with_tools(self):
+        """Test send_message includes tools and returns tool_use response."""
+        tc = ToolCall(id="toolu_abc", name="Module-view_source", arguments={"target": "mutagent"})
+        response = Response(
+            message=Message(role="assistant", content="", tool_calls=[tc]),
+            stop_reason="tool_use",
+            usage={"input_tokens": 10, "output_tokens": 8},
+        )
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = mock_response_data
+        mock_events = _async_events(
+            StreamEvent(type="tool_use_start", tool_call=tc),
+            StreamEvent(type="tool_use_end"),
+            StreamEvent(type="response_done", response=response),
+        )
 
         tools = [ToolSchema(
             name="Module-view_source",
@@ -249,10 +252,10 @@ class TestSendMessageIntegration:
             input_schema={"type": "object", "properties": {"target": {"type": "string"}}},
         )]
 
-        with patch("requests.post", return_value=mock_resp):
-            client = _make_client()
+        client = _make_client()
+        with patch.object(client.provider, "send", return_value=mock_events):
             messages = [Message(role="user", content="Show me the code")]
-            events = list(client.send_message(messages, tools, stream=False))
+            events = [e async for e in client.send_message(messages, tools, stream=False)]
 
         resp_event = [e for e in events if e.type == "response_done"][0]
         resp = resp_event.response
@@ -260,19 +263,20 @@ class TestSendMessageIntegration:
         assert len(resp.message.tool_calls) == 1
         assert resp.message.tool_calls[0].name == "Module-view_source"
 
-    def test_send_message_api_error(self):
+    async def test_send_message_api_error(self):
         """Test send_message yields error event on API error."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 401
-        mock_resp.json.return_value = {
-            "error": {"message": "Invalid API key"}
-        }
+        mock_events = _async_events(
+            StreamEvent(
+                type="error",
+                error="Claude API error (401): Invalid API key",
+            ),
+        )
 
-        with patch("requests.post", return_value=mock_resp):
-            client = _make_client()
-            events = list(client.send_message(
+        client = _make_client()
+        with patch.object(client.provider, "send", return_value=mock_events):
+            events = [e async for e in client.send_message(
                 [Message(role="user", content="Hi")], [], stream=False
-            ))
+            )]
 
         assert len(events) == 1
         assert events[0].type == "error"
@@ -294,11 +298,11 @@ class TestClaudeRealAPI:
         )
         return LLMClient(provider=provider, model="claude-sonnet-4-20250514")
 
-    def test_real_send_message(self):
+    async def test_real_send_message(self):
         """Send a real message to Claude API and verify the response structure."""
         client = self._make_real_client()
         messages = [Message(role="user", content="Reply with exactly: PONG")]
-        events = list(client.send_message(messages, []))
+        events = [e async for e in client.send_message(messages, [])]
 
         resp_event = [e for e in events if e.type == "response_done"][0]
         resp = resp_event.response
@@ -309,7 +313,7 @@ class TestClaudeRealAPI:
         assert resp.usage.get("input_tokens", 0) > 0
         assert resp.usage.get("output_tokens", 0) > 0
 
-    def test_real_send_message_with_tool_use(self):
+    async def test_real_send_message_with_tool_use(self):
         """Send a real message with tools and verify tool_use response."""
         client = self._make_real_client()
         tools = [ToolSchema(
@@ -324,7 +328,7 @@ class TestClaudeRealAPI:
             },
         )]
         messages = [Message(role="user", content="What's the weather in Tokyo?")]
-        events = list(client.send_message(messages, tools))
+        events = [e async for e in client.send_message(messages, tools)]
 
         resp_event = [e for e in events if e.type == "response_done"][0]
         resp = resp_event.response

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 import mutagent
@@ -51,6 +52,28 @@ def tool_set(toolkit):
     ts = ToolSet()
     ts.add(toolkit)
     return ts
+
+
+# ---------------------------------------------------------------------------
+# httpx mock helpers
+# ---------------------------------------------------------------------------
+
+def _make_mock_client(response: MagicMock) -> AsyncMock:
+    """创建模拟 httpx.AsyncClient 作为异步上下文管理器。"""
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.get = AsyncMock(return_value=response)
+    return mock_client
+
+
+def _make_mock_client_with_error(error: Exception) -> AsyncMock:
+    """创建模拟 httpx.AsyncClient，其 get 方法抛出异常。"""
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.get = AsyncMock(side_effect=error)
+    return mock_client
 
 
 # ---------------------------------------------------------------------------
@@ -190,70 +213,74 @@ def _mock_search_response(items):
 
 class TestSearchImpl:
 
-    @patch("mutagent.builtins.web_impl_jina.requests.get")
-    def test_search_returns_results(self, mock_get, tool_set):
-        mock_get.return_value = _mock_search_response([
+    async def test_search_returns_results(self, tool_set):
+        mock_resp = _mock_search_response([
             {"title": "Python", "url": "https://python.org", "description": "Official site"},
             {"title": "W3Schools", "url": "https://w3schools.com", "description": "Tutorials"},
         ])
-        result = tool_set.dispatch(
-            ToolCall(id="t1", name="Web-search", arguments={"query": "python"})
-        )
+        mock_client = _make_mock_client(mock_resp)
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await tool_set.dispatch(
+                ToolCall(id="t1", name="Web-search", arguments={"query": "python"})
+            )
         assert not result.is_error
         assert "Python" in result.content
         assert "https://python.org" in result.content
         assert "W3Schools" in result.content
 
-    @patch("mutagent.builtins.web_impl_jina.requests.get")
-    def test_search_respects_max_results(self, mock_get, tool_set):
-        mock_get.return_value = _mock_search_response([
+    async def test_search_respects_max_results(self, tool_set):
+        mock_resp = _mock_search_response([
             {"title": f"Result {i}", "url": f"https://example.com/{i}", "description": ""}
             for i in range(10)
         ])
-        result = tool_set.dispatch(
-            ToolCall(id="t1", name="Web-search", arguments={"query": "test", "max_results": 3})
-        )
+        mock_client = _make_mock_client(mock_resp)
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await tool_set.dispatch(
+                ToolCall(id="t1", name="Web-search", arguments={"query": "test", "max_results": 3})
+            )
         assert not result.is_error
         assert "Result 0" in result.content
         assert "Result 2" in result.content
         assert "Result 3" not in result.content
 
-    @patch("mutagent.builtins.web_impl_jina.requests.get")
-    def test_search_empty_results(self, mock_get, tool_set):
-        mock_get.return_value = _mock_search_response([])
-        result = tool_set.dispatch(
-            ToolCall(id="t1", name="Web-search", arguments={"query": "xyzzy123"})
-        )
+    async def test_search_empty_results(self, tool_set):
+        mock_resp = _mock_search_response([])
+        mock_client = _make_mock_client(mock_resp)
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await tool_set.dispatch(
+                ToolCall(id="t1", name="Web-search", arguments={"query": "xyzzy123"})
+            )
         assert not result.is_error
         assert "没有找到" in result.content
 
-    @patch("mutagent.builtins.web_impl_jina.requests.get")
-    def test_search_timeout(self, mock_get, tool_set):
-        import requests as req
-        mock_get.side_effect = req.Timeout("timeout")
-        result = tool_set.dispatch(
-            ToolCall(id="t1", name="Web-search", arguments={"query": "test"})
-        )
+    async def test_search_timeout(self, tool_set):
+        mock_client = _make_mock_client_with_error(httpx.TimeoutException("timeout"))
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await tool_set.dispatch(
+                ToolCall(id="t1", name="Web-search", arguments={"query": "test"})
+            )
         assert not result.is_error  # 错误信息作为正常文本返回
         assert "超时" in result.content
 
-    @patch("mutagent.builtins.web_impl_jina.requests.get")
-    def test_search_request_error(self, mock_get, tool_set):
-        import requests as req
-        mock_get.side_effect = req.ConnectionError("connection refused")
-        result = tool_set.dispatch(
-            ToolCall(id="t1", name="Web-search", arguments={"query": "test"})
+    async def test_search_request_error(self, tool_set):
+        mock_client = _make_mock_client_with_error(
+            httpx.ConnectError("connection refused")
         )
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await tool_set.dispatch(
+                ToolCall(id="t1", name="Web-search", arguments={"query": "test"})
+            )
         assert not result.is_error
         assert "搜索失败" in result.content
 
-    @patch("mutagent.builtins.web_impl_jina.requests.get")
-    def test_search_sends_api_key(self, mock_get, toolkit_with_key):
-        mock_get.return_value = _mock_search_response([])
+    async def test_search_sends_api_key(self, toolkit_with_key):
+        mock_resp = _mock_search_response([])
+        mock_client = _make_mock_client(mock_resp)
         ts = ToolSet()
         ts.add(toolkit_with_key)
-        ts.dispatch(ToolCall(id="t1", name="Web-search", arguments={"query": "test"}))
-        call_kwargs = mock_get.call_args
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            await ts.dispatch(ToolCall(id="t1", name="Web-search", arguments={"query": "test"}))
+        call_kwargs = mock_client.get.call_args
         headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
         assert headers.get("Authorization") == "Bearer test-key-123"
 
@@ -281,72 +308,73 @@ def _mock_fetch_response(title, content):
 
 class TestFetchImpl:
 
-    @patch("mutagent.builtins.web_impl_jina.requests.get")
-    def test_fetch_returns_content(self, mock_get, tool_set):
-        mock_get.return_value = _mock_fetch_response(
-            "Example", "Hello, world!"
-        )
-        result = tool_set.dispatch(
-            ToolCall(id="t1", name="Web-fetch", arguments={"url": "https://example.com"})
-        )
+    async def test_fetch_returns_content(self, tool_set):
+        mock_resp = _mock_fetch_response("Example", "Hello, world!")
+        mock_client = _make_mock_client(mock_resp)
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await tool_set.dispatch(
+                ToolCall(id="t1", name="Web-fetch", arguments={"url": "https://example.com"})
+            )
         assert not result.is_error
         assert "Example" in result.content
         assert "Hello, world!" in result.content
 
-    @patch("mutagent.builtins.web_impl_jina.requests.get")
-    def test_fetch_includes_title(self, mock_get, tool_set):
-        mock_get.return_value = _mock_fetch_response(
-            "My Page", "Page content here"
-        )
-        result = tool_set.dispatch(
-            ToolCall(id="t1", name="Web-fetch", arguments={"url": "https://example.com"})
-        )
+    async def test_fetch_includes_title(self, tool_set):
+        mock_resp = _mock_fetch_response("My Page", "Page content here")
+        mock_client = _make_mock_client(mock_resp)
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await tool_set.dispatch(
+                ToolCall(id="t1", name="Web-fetch", arguments={"url": "https://example.com"})
+            )
         assert "# My Page" in result.content
 
-    @patch("mutagent.builtins.web_impl_jina.requests.get")
-    def test_fetch_truncates_long_content(self, mock_get, tool_set):
+    async def test_fetch_truncates_long_content(self, tool_set):
         long_content = "x" * 60000
-        mock_get.return_value = _mock_fetch_response("Long", long_content)
-        result = tool_set.dispatch(
-            ToolCall(id="t1", name="Web-fetch", arguments={"url": "https://example.com"})
-        )
+        mock_resp = _mock_fetch_response("Long", long_content)
+        mock_client = _make_mock_client(mock_resp)
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await tool_set.dispatch(
+                ToolCall(id="t1", name="Web-fetch", arguments={"url": "https://example.com"})
+            )
         assert not result.is_error
         assert "截断" in result.content
         assert len(result.content) < 60000
 
-    @patch("mutagent.builtins.web_impl_jina.requests.get")
-    def test_fetch_empty_content(self, mock_get, tool_set):
-        mock_get.return_value = _mock_fetch_response("Empty", "")
-        result = tool_set.dispatch(
-            ToolCall(id="t1", name="Web-fetch", arguments={"url": "https://example.com"})
-        )
+    async def test_fetch_empty_content(self, tool_set):
+        mock_resp = _mock_fetch_response("Empty", "")
+        mock_client = _make_mock_client(mock_resp)
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await tool_set.dispatch(
+                ToolCall(id="t1", name="Web-fetch", arguments={"url": "https://example.com"})
+            )
         assert "无法提取" in result.content
 
-    @patch("mutagent.builtins.web_impl_jina.requests.get")
-    def test_fetch_timeout(self, mock_get, tool_set):
-        import requests as req
-        mock_get.side_effect = req.Timeout("timeout")
-        result = tool_set.dispatch(
-            ToolCall(id="t1", name="Web-fetch", arguments={"url": "https://example.com"})
-        )
+    async def test_fetch_timeout(self, tool_set):
+        mock_client = _make_mock_client_with_error(httpx.TimeoutException("timeout"))
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await tool_set.dispatch(
+                ToolCall(id="t1", name="Web-fetch", arguments={"url": "https://example.com"})
+            )
         assert "超时" in result.content
 
-    @patch("mutagent.builtins.web_impl_jina.requests.get")
-    def test_fetch_sends_api_key(self, mock_get, toolkit_with_key):
-        mock_get.return_value = _mock_fetch_response("Test", "content")
+    async def test_fetch_sends_api_key(self, toolkit_with_key):
+        mock_resp = _mock_fetch_response("Test", "content")
+        mock_client = _make_mock_client(mock_resp)
         ts = ToolSet()
         ts.add(toolkit_with_key)
-        ts.dispatch(ToolCall(id="t1", name="Web-fetch", arguments={"url": "https://example.com"}))
-        call_kwargs = mock_get.call_args
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            await ts.dispatch(ToolCall(id="t1", name="Web-fetch", arguments={"url": "https://example.com"}))
+        call_kwargs = mock_client.get.call_args
         headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
         assert headers.get("Authorization") == "Bearer test-key-123"
 
-    @patch("mutagent.builtins.web_impl_jina.requests.get")
-    def test_fetch_no_api_key_no_auth_header(self, mock_get, tool_set):
-        mock_get.return_value = _mock_fetch_response("Test", "content")
-        tool_set.dispatch(
-            ToolCall(id="t1", name="Web-fetch", arguments={"url": "https://example.com"})
-        )
-        call_kwargs = mock_get.call_args
+    async def test_fetch_no_api_key_no_auth_header(self, tool_set):
+        mock_resp = _mock_fetch_response("Test", "content")
+        mock_client = _make_mock_client(mock_resp)
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            await tool_set.dispatch(
+                ToolCall(id="t1", name="Web-fetch", arguments={"url": "https://example.com"})
+            )
+        call_kwargs = mock_client.get.call_args
         headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
         assert "Authorization" not in headers

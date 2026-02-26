@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, AsyncIterator
 
 import mutagent
 
@@ -24,14 +24,14 @@ class LLMProvider(mutagent.Declaration):
         """从模型配置创建 provider 实例。子类覆盖此方法。"""
         ...
 
-    def send(
+    async def send(
         self,
         model: str,
         messages: list[Message],
         tools: list[ToolSchema],
         system_prompt: str = "",
         stream: bool = True,
-    ) -> Iterator[StreamEvent]:
+    ) -> AsyncIterator[StreamEvent]:
         """发送请求到 LLM 后端，返回流式事件。
 
         Args:

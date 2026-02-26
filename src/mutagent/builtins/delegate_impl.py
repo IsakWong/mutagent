@@ -10,8 +10,8 @@ logger = logging.getLogger(__name__)
 
 
 @mutagent.impl(AgentToolkit.delegate)
-def delegate(self: AgentToolkit, agent_name: str, task: str) -> str:
-    """Delegate a task to a named Sub-Agent (synchronous blocking)."""
+async def delegate(self: AgentToolkit, agent_name: str, task: str) -> str:
+    """Delegate a task to a named Sub-Agent (async)."""
     agent = self.agents.get(agent_name)
     if agent is None:
         available = list(self.agents.keys())
@@ -22,13 +22,13 @@ def delegate(self: AgentToolkit, agent_name: str, task: str) -> str:
     # Clear message history (each call is independent)
     agent.messages.clear()
 
-    # Build input stream with the task
-    def input_stream():
+    # Build async input stream with the task
+    async def input_stream():
         yield InputEvent(type="user_message", text=task)
 
     # Run sub-agent and collect result
     text_parts = []
-    for event in agent.run(input_stream()):
+    async for event in agent.run(input_stream()):
         if event.type == "text_delta":
             text_parts.append(event.text)
 

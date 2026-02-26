@@ -30,26 +30,26 @@ import mutagent.builtins  # noqa: F401  -- register all @impl
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _single_input(text: str):
-    """Create an iterator yielding a single user_message InputEvent."""
+async def _single_input(text: str):
+    """Create an async iterator yielding a single user_message InputEvent."""
     yield InputEvent(type="user_message", text=text)
 
 
-def _multi_input(*texts: str):
-    """Create an iterator yielding multiple user_message InputEvents."""
+async def _multi_input(*texts: str):
+    """Create an async iterator yielding multiple user_message InputEvents."""
     for text in texts:
         yield InputEvent(type="user_message", text=text)
 
 
-def _collect_events(iter):
-    """Collect all StreamEvents from an iterator into a list."""
-    return list(iter)
+async def _collect_events(aiter):
+    """Collect all StreamEvents from an async iterator into a list."""
+    return [event async for event in aiter]
 
 
-def _collect_text(iter):
+async def _collect_text(aiter):
     """Collect text from text_delta events."""
     text_parts = []
-    for event in iter:
+    async for event in aiter:
         if event.type == "text_delta":
             text_parts.append(event.text)
     return "".join(text_parts)
@@ -86,6 +86,31 @@ def _make_agent(mock_client=None):
     return agent, mgr
 
 
+def _mock_send(events_list):
+    """Create a mock async send_message that yields events from a list or list of lists.
+
+    If events_list is a list of StreamEvent, all are yielded on every call.
+    If events_list is a list of lists, each call yields the next sub-list.
+    """
+    if events_list and isinstance(events_list[0], list):
+        call_idx = 0
+
+        async def mock_send(*args, **kwargs):
+            nonlocal call_idx
+            evts = events_list[call_idx] if call_idx < len(events_list) else events_list[-1]
+            call_idx += 1
+            for e in evts:
+                yield e
+
+        return mock_send
+    else:
+        async def mock_send(*args, **kwargs):
+            for e in events_list:
+                yield e
+
+        return mock_send
+
+
 # ---------------------------------------------------------------------------
 # Declaration tests
 # ---------------------------------------------------------------------------
@@ -106,7 +131,7 @@ class TestAgentDeclaration:
 
 
 # ---------------------------------------------------------------------------
-# Agent loop tests (adapted for streaming input interface)
+# Agent loop tests (adapted for async streaming input interface)
 # ---------------------------------------------------------------------------
 
 class TestAgentLoop:
@@ -123,7 +148,7 @@ class TestAgentLoop:
         yield agent
         mgr.cleanup()
 
-    def test_simple_response(self, agent):
+    async def test_simple_response(self, agent):
         """Agent receives a simple text response (no tool calls)."""
         response = Response(
             message=Message(role="assistant", content="Hello! How can I help?"),
@@ -131,14 +156,9 @@ class TestAgentLoop:
             usage={"input_tokens": 10, "output_tokens": 5},
         )
         events = _make_stream_events_for_response(response)
+        agent.client.send_message = _mock_send(events)
 
-        def mock_send(*args, **kwargs):
-            for e in events:
-                yield e
-
-        agent.client.send_message = mock_send
-
-        text = _collect_text(agent.run(_single_input("Hi")))
+        text = await _collect_text(agent.run(_single_input("Hi")))
 
         assert text == "Hello! How can I help?"
         assert len(agent.messages) == 2  # user + assistant
@@ -146,7 +166,7 @@ class TestAgentLoop:
         assert agent.messages[0].content == "Hi"
         assert agent.messages[1].role == "assistant"
 
-    def test_tool_call_then_response(self, agent):
+    async def test_tool_call_then_response(self, agent):
         """Agent handles a tool call then gets final response."""
         # First response: tool call
         tool_response = Response(
@@ -165,18 +185,9 @@ class TestAgentLoop:
 
         events_1 = _make_stream_events_for_response(tool_response)
         events_2 = _make_stream_events_for_response(final_response)
-        call_idx = 0
+        agent.client.send_message = _mock_send([events_1, events_2])
 
-        def mock_send(*args, **kwargs):
-            nonlocal call_idx
-            evts = [events_1, events_2][call_idx]
-            call_idx += 1
-            for e in evts:
-                yield e
-
-        agent.client.send_message = mock_send
-
-        text = _collect_text(agent.run(_single_input("What is 1+1?")))
+        text = await _collect_text(agent.run(_single_input("What is 1+1?")))
 
         assert text == "Let me inspect the module.The result is ready."
         assert len(agent.messages) == 4  # user, assistant(tool_call), user(tool_result), assistant(final)
@@ -184,7 +195,7 @@ class TestAgentLoop:
         assert len(agent.messages[2].tool_results) == 1
         assert "mutagent" in agent.messages[2].tool_results[0].content
 
-    def test_multiple_tool_calls(self, agent):
+    async def test_multiple_tool_calls(self, agent):
         """Agent handles multiple tool calls in one response."""
         tool_response = Response(
             message=Message(
@@ -204,38 +215,24 @@ class TestAgentLoop:
 
         events_1 = _make_stream_events_for_response(tool_response)
         events_2 = _make_stream_events_for_response(final_response)
-        call_idx = 0
+        agent.client.send_message = _mock_send([events_1, events_2])
 
-        def mock_send(*args, **kwargs):
-            nonlocal call_idx
-            evts = [events_1, events_2][call_idx]
-            call_idx += 1
-            for e in evts:
-                yield e
-
-        agent.client.send_message = mock_send
-
-        text = _collect_text(agent.run(_single_input("Run two things")))
+        text = await _collect_text(agent.run(_single_input("Run two things")))
 
         assert text == "Done."
         assert len(agent.messages[2].tool_results) == 2
 
-    def test_step_yields_events(self, agent):
+    async def test_step_yields_events(self, agent):
         """step() yields StreamEvents from client.send_message."""
         response = Response(
             message=Message(role="assistant", content="Response"),
             stop_reason="end_turn",
         )
         events = _make_stream_events_for_response(response)
-
-        def mock_send(*args, **kwargs):
-            for e in events:
-                yield e
-
-        agent.client.send_message = mock_send
+        agent.client.send_message = _mock_send(events)
         agent.messages.append(Message(role="user", content="Test"))
 
-        collected = _collect_events(agent.step())
+        collected = await _collect_events(agent.step())
 
         assert len(collected) == 2  # text_delta + response_done
         assert collected[0].type == "text_delta"
@@ -243,12 +240,12 @@ class TestAgentLoop:
         assert collected[1].type == "response_done"
         assert collected[1].response is response
 
-    def test_handle_tool_calls_dispatches(self, agent):
+    async def test_handle_tool_calls_dispatches(self, agent):
         """handle_tool_calls dispatches each call through the tool set."""
         calls = [
             ToolCall(id="tc_1", name="Module-define", arguments={"module_path": "test_dispatch.mod", "source": "x = 42\n"}),
         ]
-        results = agent.handle_tool_calls(calls)
+        results = await agent.handle_tool_calls(calls)
 
         assert len(results) == 1
         assert results[0].tool_call_id == "tc_1"
@@ -267,25 +264,25 @@ class TestStreamingEventSequence:
         yield agent
         mgr.cleanup()
 
-    def test_event_order_simple(self, agent):
+    async def test_event_order_simple(self, agent):
         """Simple response yields: text_delta, response_done, turn_done."""
         response = Response(
             message=Message(role="assistant", content="Hello"),
             stop_reason="end_turn",
         )
 
-        def mock_send(*args, **kwargs):
+        async def mock_send(*args, **kwargs):
             yield StreamEvent(type="text_delta", text="Hello")
             yield StreamEvent(type="response_done", response=response)
 
         agent.client.send_message = mock_send
 
-        events = _collect_events(agent.run(_single_input("Hi")))
+        events = await _collect_events(agent.run(_single_input("Hi")))
         types = [e.type for e in events]
 
         assert types == ["text_delta", "response_done", "turn_done"]
 
-    def test_event_order_with_tool_call(self, agent):
+    async def test_event_order_with_tool_call(self, agent):
         """Tool call response yields correct event sequence including turn_done."""
         tool_response = Response(
             message=Message(
@@ -302,7 +299,7 @@ class TestStreamingEventSequence:
 
         call_idx = 0
 
-        def mock_send(*args, **kwargs):
+        async def mock_send(*args, **kwargs):
             nonlocal call_idx
             if call_idx == 0:
                 call_idx += 1
@@ -319,7 +316,7 @@ class TestStreamingEventSequence:
 
         agent.client.send_message = mock_send
 
-        events = _collect_events(agent.run(_single_input("Calc")))
+        events = await _collect_events(agent.run(_single_input("Calc")))
         types = [e.type for e in events]
 
         assert types == [
@@ -341,14 +338,14 @@ class TestStreamingEventSequence:
         assert exec_end.tool_result is not None
         assert exec_end.tool_result.tool_call_id == "tc_1"
 
-    def test_error_event_stops_turn(self, agent):
+    async def test_error_event_stops_turn(self, agent):
         """An error event from LLM stops the current turn but yields turn_done."""
-        def mock_send(*args, **kwargs):
+        async def mock_send(*args, **kwargs):
             yield StreamEvent(type="error", error="API failed")
 
         agent.client.send_message = mock_send
 
-        events = _collect_events(agent.run(_single_input("Hi")))
+        events = await _collect_events(agent.run(_single_input("Hi")))
         types = [e.type for e in events]
 
         assert types == ["error", "turn_done"]
@@ -357,20 +354,20 @@ class TestStreamingEventSequence:
         assert len(agent.messages) == 1
         assert agent.messages[0].role == "user"
 
-    def test_stream_false_produces_events(self, agent):
+    async def test_stream_false_produces_events(self, agent):
         """stream=False still yields events through the same interface."""
         response = Response(
             message=Message(role="assistant", content="Non-streamed"),
             stop_reason="end_turn",
         )
 
-        def mock_send(*args, **kwargs):
+        async def mock_send(*args, **kwargs):
             yield StreamEvent(type="text_delta", text="Non-streamed")
             yield StreamEvent(type="response_done", response=response)
 
         agent.client.send_message = mock_send
 
-        text = _collect_text(agent.run(_single_input("Test"), stream=False))
+        text = await _collect_text(agent.run(_single_input("Test"), stream=False))
         assert text == "Non-streamed"
 
 
@@ -386,7 +383,7 @@ class TestMultiTurnAndErrorRecovery:
         yield agent
         mgr.cleanup()
 
-    def test_multi_turn_single_run(self, agent):
+    async def test_multi_turn_single_run(self, agent):
         """Multiple InputEvents are processed through a single agent.run() call."""
         response_1 = Response(
             message=Message(role="assistant", content="Hi there"),
@@ -399,7 +396,7 @@ class TestMultiTurnAndErrorRecovery:
 
         call_idx = 0
 
-        def mock_send(*args, **kwargs):
+        async def mock_send(*args, **kwargs):
             nonlocal call_idx
             if call_idx == 0:
                 call_idx += 1
@@ -411,7 +408,7 @@ class TestMultiTurnAndErrorRecovery:
 
         agent.client.send_message = mock_send
 
-        events = _collect_events(
+        events = await _collect_events(
             agent.run(_multi_input("Hello", "How are you?"))
         )
         types = [e.type for e in events]
@@ -429,7 +426,7 @@ class TestMultiTurnAndErrorRecovery:
         assert agent.messages[2].content == "How are you?"
         assert agent.messages[3].content == "I'm fine"
 
-    def test_error_then_continue(self, agent):
+    async def test_error_then_continue(self, agent):
         """After an error in one turn, agent continues processing the next input."""
         response_ok = Response(
             message=Message(role="assistant", content="OK now"),
@@ -438,7 +435,7 @@ class TestMultiTurnAndErrorRecovery:
 
         call_idx = 0
 
-        def mock_send(*args, **kwargs):
+        async def mock_send(*args, **kwargs):
             nonlocal call_idx
             if call_idx == 0:
                 call_idx += 1
@@ -449,7 +446,7 @@ class TestMultiTurnAndErrorRecovery:
 
         agent.client.send_message = mock_send
 
-        events = _collect_events(
+        events = await _collect_events(
             agent.run(_multi_input("First", "Second"))
         )
         types = [e.type for e in events]
@@ -480,7 +477,7 @@ class TestStopReasonToolCallsMismatch:
         yield agent
         mgr.cleanup()
 
-    def test_end_turn_with_tool_calls_executes_tools(self, agent):
+    async def test_end_turn_with_tool_calls_executes_tools(self, agent):
         """When stop_reason=end_turn but tool_calls exist, tools should still be executed."""
         tool_response = Response(
             message=Message(
@@ -495,21 +492,11 @@ class TestStopReasonToolCallsMismatch:
             stop_reason="end_turn",
         )
 
-        call_idx = 0
+        events_1 = _make_stream_events_for_response(tool_response)
+        events_2 = _make_stream_events_for_response(final_response)
+        agent.client.send_message = _mock_send([events_1, events_2])
 
-        def mock_send(*args, **kwargs):
-            nonlocal call_idx
-            if call_idx == 0:
-                call_idx += 1
-                for e in _make_stream_events_for_response(tool_response):
-                    yield e
-            else:
-                for e in _make_stream_events_for_response(final_response):
-                    yield e
-
-        agent.client.send_message = mock_send
-
-        events = _collect_events(agent.run(_single_input("Check modules")))
+        events = await _collect_events(agent.run(_single_input("Check modules")))
         types = [e.type for e in events]
 
         # Tool should be executed despite stop_reason=end_turn
@@ -519,26 +506,21 @@ class TestStopReasonToolCallsMismatch:
         assert len(agent.messages) == 4
         assert len(agent.messages[2].tool_results) == 1
 
-    def test_end_turn_without_tool_calls_ends_turn(self, agent):
+    async def test_end_turn_without_tool_calls_ends_turn(self, agent):
         """When stop_reason=end_turn and no tool_calls, turn ends normally (regression)."""
         response = Response(
             message=Message(role="assistant", content="All done."),
             stop_reason="end_turn",
         )
+        agent.client.send_message = _mock_send(_make_stream_events_for_response(response))
 
-        def mock_send(*args, **kwargs):
-            for e in _make_stream_events_for_response(response):
-                yield e
-
-        agent.client.send_message = mock_send
-
-        events = _collect_events(agent.run(_single_input("Hi")))
+        events = await _collect_events(agent.run(_single_input("Hi")))
         types = [e.type for e in events]
 
         assert types == ["text_delta", "response_done", "turn_done"]
         assert len(agent.messages) == 2
 
-    def test_tool_use_with_tool_calls_still_works(self, agent):
+    async def test_tool_use_with_tool_calls_still_works(self, agent):
         """When stop_reason=tool_use and tool_calls exist, behavior unchanged (regression)."""
         tool_response = Response(
             message=Message(
@@ -553,21 +535,11 @@ class TestStopReasonToolCallsMismatch:
             stop_reason="end_turn",
         )
 
-        call_idx = 0
+        events_1 = _make_stream_events_for_response(tool_response)
+        events_2 = _make_stream_events_for_response(final_response)
+        agent.client.send_message = _mock_send([events_1, events_2])
 
-        def mock_send(*args, **kwargs):
-            nonlocal call_idx
-            if call_idx == 0:
-                call_idx += 1
-                for e in _make_stream_events_for_response(tool_response):
-                    yield e
-            else:
-                for e in _make_stream_events_for_response(final_response):
-                    yield e
-
-        agent.client.send_message = mock_send
-
-        events = _collect_events(agent.run(_single_input("Inspect")))
+        events = await _collect_events(agent.run(_single_input("Inspect")))
         types = [e.type for e in events]
 
         assert "tool_exec_start" in types
@@ -593,7 +565,7 @@ class TestMaxToolRounds:
 
         call_idx = 0
 
-        def mock_send(*args, **kwargs):
+        async def mock_send(*args, **kwargs):
             nonlocal call_idx
             idx = call_idx
             call_idx += 1
@@ -628,11 +600,11 @@ class TestMaxToolRounds:
         agent.client.send_message = mock_send
         return agent, mgr
 
-    def test_max_tool_rounds_stops_loop(self):
+    async def test_max_tool_rounds_stops_loop(self):
         """Agent stops after max_tool_rounds and requests summary."""
         agent, mgr = self._make_tool_loop_agent(max_rounds=3, total_tool_responses=10)
         try:
-            events = _collect_events(agent.run(_single_input("Do work")))
+            events = await _collect_events(agent.run(_single_input("Do work")))
             types = [e.type for e in events]
 
             # Should have tool_exec events for 3 rounds, then stop
@@ -655,11 +627,11 @@ class TestMaxToolRounds:
         finally:
             mgr.cleanup()
 
-    def test_below_max_tool_rounds_normal(self):
+    async def test_below_max_tool_rounds_normal(self):
         """Agent completes normally when tool rounds are below limit."""
         agent, mgr = self._make_tool_loop_agent(max_rounds=25, total_tool_responses=3)
         try:
-            events = _collect_events(agent.run(_single_input("Small task")))
+            events = await _collect_events(agent.run(_single_input("Small task")))
             types = [e.type for e in events]
 
             tool_exec_starts = [e for e in events if e.type == "tool_exec_start"]
@@ -676,11 +648,11 @@ class TestMaxToolRounds:
         finally:
             mgr.cleanup()
 
-    def test_custom_max_tool_rounds(self):
+    async def test_custom_max_tool_rounds(self):
         """Custom max_tool_rounds=1 stops after 1 round."""
         agent, mgr = self._make_tool_loop_agent(max_rounds=1, total_tool_responses=5)
         try:
-            events = _collect_events(agent.run(_single_input("Quick")))
+            events = await _collect_events(agent.run(_single_input("Quick")))
 
             tool_exec_starts = [e for e in events if e.type == "tool_exec_start"]
             assert len(tool_exec_starts) == 1
@@ -693,7 +665,7 @@ class TestMaxToolRounds:
         finally:
             mgr.cleanup()
 
-    def test_default_max_tool_rounds_behavior(self):
+    async def test_default_max_tool_rounds_behavior(self):
         """Agent without explicit max_tool_rounds uses default of 25."""
         agent, mgr = _make_agent()
         try:
@@ -703,7 +675,7 @@ class TestMaxToolRounds:
         finally:
             mgr.cleanup()
 
-    def test_explicit_max_tool_rounds(self):
+    async def test_explicit_max_tool_rounds(self):
         """Agent with explicit max_tool_rounds stores the value."""
         agent, mgr = _make_agent()
         try:

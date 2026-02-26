@@ -1,5 +1,7 @@
 """mutagent.builtins.tool_set -- ToolSet implementation."""
 
+import asyncio
+import inspect
 import logging
 from typing import Any
 
@@ -327,7 +329,7 @@ def get_tools(self: ToolSet) -> list[ToolSchema]:
 
 
 @mutagent.impl(ToolSet.dispatch)
-def dispatch(self: ToolSet, tool_call: ToolCall) -> ToolResult:
+async def dispatch(self: ToolSet, tool_call: ToolCall) -> ToolResult:
     """Dispatch a tool call to the corresponding implementation."""
     if self.auto_discover:
         _refresh_discovered(self)
@@ -340,7 +342,11 @@ def dispatch(self: ToolSet, tool_call: ToolCall) -> ToolResult:
             is_error=True,
         )
     try:
-        result = entry.callable(**tool_call.arguments)
+        fn = entry.callable
+        if inspect.iscoroutinefunction(fn):
+            result = await fn(**tool_call.arguments)
+        else:
+            result = await asyncio.to_thread(fn, **tool_call.arguments)
         return ToolResult(tool_call_id=tool_call.id, content=str(result))
     except Exception as e:
         return ToolResult(
