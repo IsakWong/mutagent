@@ -23,8 +23,8 @@ _LOG_LINE_RE = re.compile(
 # Regex to detect the start of a new log entry (timestamp at line start)
 _TIMESTAMP_START_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
 
-# Session timestamp pattern in filenames
-_SESSION_TS_RE = re.compile(r"(\d{8}_\d{6})")
+# Known log file suffixes for session prefix extraction
+_LOG_SUFFIXES = ("-log.log", "-api.jsonl")
 
 # Level name → numeric value for comparison
 _LEVEL_VALUES = {
@@ -96,9 +96,9 @@ class LogQueryEngine:
     def list_sessions(self) -> list[SessionInfo]:
         """List all sessions found in the log directory.
 
-        Scans for ``TIMESTAMP-log.log`` and ``TIMESTAMP-api.jsonl`` files,
-        extracts session timestamps, and pairs them together.  Also computes
-        tool call statistics and session duration from API JSONL files.
+        Scans for files ending with ``-log.log`` or ``-api.jsonl``,
+        extracts session identifiers from filename prefixes, and pairs them.
+        Also computes tool call statistics and session duration from API JSONL files.
         """
         if not self._log_dir.is_dir():
             return []
@@ -106,20 +106,19 @@ class LogQueryEngine:
         sessions: dict[str, SessionInfo] = {}
 
         for path in self._log_dir.iterdir():
-            m = _SESSION_TS_RE.search(path.name)
-            if m is None:
+            session_id = _extract_session_prefix(path.name)
+            if session_id is None:
                 continue
-            ts = m.group(1)
-            if ts not in sessions:
-                sessions[ts] = SessionInfo(timestamp=ts)
+            if session_id not in sessions:
+                sessions[session_id] = SessionInfo(timestamp=session_id)
 
             if path.name.endswith("-log.log"):
-                sessions[ts].log_file = path
-                sessions[ts].log_lines = _count_lines(path)
+                sessions[session_id].log_file = path
+                sessions[session_id].log_lines = _count_lines(path)
             elif path.name.endswith("-api.jsonl"):
-                sessions[ts].api_file = path
+                sessions[session_id].api_file = path
                 n = _count_lines(path)
-                sessions[ts].api_calls = max(0, n - 1) if n >= 0 else -1
+                sessions[session_id].api_calls = max(0, n - 1) if n >= 0 else -1
 
         # Compute tool statistics and duration for each session with an API file
         for info in sessions.values():
@@ -174,6 +173,7 @@ class LogQueryEngine:
         limit: int = 50,
         time_from: str = "",
         time_to: str = "",
+        logger_name: str = "",
     ) -> list[LogLine]:
         """Query log entries from a session's log file.
 
@@ -184,6 +184,7 @@ class LogQueryEngine:
             limit: Maximum number of entries to return.
             time_from: Time range start (HH:MM:SS).
             time_to: Time range end (HH:MM:SS).
+            logger_name: Filter by logger name (prefix match).
 
         Returns:
             Matching log entries (in file order).
@@ -201,6 +202,11 @@ class LogQueryEngine:
             entry_level = _LEVEL_VALUES.get(entry.level, logging.DEBUG)
             if entry_level < min_level:
                 continue
+
+            # Logger name filter (prefix match)
+            if logger_name:
+                if entry.logger_name != logger_name and not entry.logger_name.startswith(logger_name + "."):
+                    continue
 
             # Time filter
             if time_from or time_to:
@@ -388,6 +394,18 @@ class LogQueryEngine:
 # ---------------------------------------------------------------------------
 # File parsing helpers
 # ---------------------------------------------------------------------------
+
+
+def _extract_session_prefix(filename: str) -> str | None:
+    """Extract session identifier from a log filename.
+
+    Recognizes files like ``20260217_085924-log.log``, ``a1b2c3d4e5f6-api.jsonl``,
+    or ``server-20260217_085924-log.log`` (server prefix is included in the session id).
+    """
+    for suffix in _LOG_SUFFIXES:
+        if filename.endswith(suffix):
+            return filename[: -len(suffix)]
+    return None
 
 
 def _iter_file_lines(path: Path):

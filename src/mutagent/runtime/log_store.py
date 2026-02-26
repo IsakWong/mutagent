@@ -52,6 +52,7 @@ class LogStore:
         pattern: str = "",
         level: str = "DEBUG",
         limit: int = 50,
+        logger_name: str = "",
     ) -> list[LogEntry]:
         """Query log entries, newest first.
 
@@ -59,6 +60,7 @@ class LogStore:
             pattern: Regex pattern to match against message. Empty matches all.
             level: Minimum log level filter.
             limit: Maximum number of entries to return.
+            logger_name: Filter by logger name (prefix match). Empty matches all.
 
         Returns:
             Matching entries in reverse chronological order (newest first).
@@ -73,6 +75,9 @@ class LogStore:
             entry_level = _LEVEL_VALUES.get(entry.level, logging.DEBUG)
             if entry_level < min_level:
                 continue
+            if logger_name:
+                if entry.logger_name != logger_name and not entry.logger_name.startswith(logger_name + "."):
+                    continue
             if compiled and not compiled.search(entry.message):
                 continue
             results.append(entry)

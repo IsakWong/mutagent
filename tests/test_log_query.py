@@ -792,3 +792,188 @@ class TestCLITools:
         assert "Tools(ok/err)" in output
         assert "Duration" in output
         assert "2/1" in output  # 2 ok, 1 error
+
+
+# ---------------------------------------------------------------------------
+# 多行日志预览 / 展开
+# ---------------------------------------------------------------------------
+
+MULTILINE_LOG = """\
+2026-02-17 08:59:24,301 INFO     mutagent.test - single line message
+2026-02-17 08:59:25,000 ERROR    mutagent.agent - Traceback (most recent call last):
+\t  File "agent.py", line 10, in run
+\t    result = self._call()
+\t  File "agent.py", line 20, in _call
+\t    return provider.send()
+\tConnectionError: connection refused
+"""
+
+
+class TestMultilinePreview:
+
+    @pytest.fixture
+    def engine(self, tmp_path):
+        (tmp_path / "20260217_085924-log.log").write_text(MULTILINE_LOG, encoding="utf-8")
+        return LogQueryEngine(tmp_path)
+
+    def test_default_preview_shows_3_lines(self, tmp_path, capsys):
+        (tmp_path / "20260217_085924-log.log").write_text(MULTILINE_LOG, encoding="utf-8")
+        cli_main(["--dir", str(tmp_path), "logs", "-s", "20260217_085924", "-l", "ERROR"])
+        output = capsys.readouterr().out
+        lines = output.strip().split("\n")
+        # 首行 + 2 续行 + 提示行 = 4 行
+        assert "Traceback" in lines[0]
+        assert "File" in lines[1]
+        assert "+3 lines" in lines[-1] or "use -e to expand" in lines[-1]
+
+    def test_expand_shows_all_lines(self, tmp_path, capsys):
+        (tmp_path / "20260217_085924-log.log").write_text(MULTILINE_LOG, encoding="utf-8")
+        cli_main(["--dir", str(tmp_path), "logs", "-s", "20260217_085924", "-l", "ERROR", "-e"])
+        output = capsys.readouterr().out
+        assert "ConnectionError" in output
+        assert "+3 lines" not in output
+        assert "use -e to expand" not in output
+
+    def test_single_line_message_no_preview_hint(self, tmp_path, capsys):
+        (tmp_path / "20260217_085924-log.log").write_text(MULTILINE_LOG, encoding="utf-8")
+        cli_main(["--dir", str(tmp_path), "logs", "-s", "20260217_085924", "-p", "single line"])
+        output = capsys.readouterr().out
+        assert "single line message" in output
+        assert "use -e to expand" not in output
+
+    def test_continuation_lines_aligned(self, tmp_path, capsys):
+        (tmp_path / "20260217_085924-log.log").write_text(MULTILINE_LOG, encoding="utf-8")
+        cli_main(["--dir", str(tmp_path), "logs", "-s", "20260217_085924", "-l", "ERROR", "-e"])
+        output = capsys.readouterr().out
+        lines = output.strip().split("\n")
+        # 续行应以 "     |" 开头
+        for line in lines[1:]:
+            assert line.startswith("     |")
+
+
+# ---------------------------------------------------------------------------
+# --logger 过滤
+# ---------------------------------------------------------------------------
+
+LOGGER_FILTER_LOG = """\
+2026-02-17 08:59:24,301 INFO     mutbot.web.server - server started
+2026-02-17 08:59:25,000 DEBUG    mutbot.web.server.auth - checking token
+2026-02-17 08:59:26,000 INFO     mutagent.builtins.agent_impl - agent ready
+2026-02-17 08:59:27,000 WARNING  mutbot.proxy.routes - timeout
+"""
+
+
+class TestLoggerFilter:
+
+    def test_engine_logger_name_filter(self, tmp_path):
+        (tmp_path / "20260217_085924-log.log").write_text(LOGGER_FILTER_LOG, encoding="utf-8")
+        engine = LogQueryEngine(tmp_path)
+        results = engine.query_logs(session="20260217_085924", logger_name="mutbot.web.server", limit=100)
+        assert len(results) == 2
+        assert results[0].logger_name == "mutbot.web.server"
+        assert results[1].logger_name == "mutbot.web.server.auth"
+
+    def test_engine_logger_exact_match(self, tmp_path):
+        (tmp_path / "20260217_085924-log.log").write_text(LOGGER_FILTER_LOG, encoding="utf-8")
+        engine = LogQueryEngine(tmp_path)
+        results = engine.query_logs(session="20260217_085924", logger_name="mutbot.proxy.routes", limit=100)
+        assert len(results) == 1
+        assert results[0].logger_name == "mutbot.proxy.routes"
+
+    def test_engine_no_match(self, tmp_path):
+        (tmp_path / "20260217_085924-log.log").write_text(LOGGER_FILTER_LOG, encoding="utf-8")
+        engine = LogQueryEngine(tmp_path)
+        results = engine.query_logs(session="20260217_085924", logger_name="nonexistent", limit=100)
+        assert len(results) == 0
+
+    def test_cli_logger_flag(self, tmp_path, capsys):
+        (tmp_path / "20260217_085924-log.log").write_text(LOGGER_FILTER_LOG, encoding="utf-8")
+        cli_main(["--dir", str(tmp_path), "logs", "-s", "20260217_085924", "--logger", "mutbot.web.server"])
+        output = capsys.readouterr().out
+        assert "server started" in output
+        assert "checking token" in output
+        assert "agent ready" not in output
+        assert "timeout" not in output
+
+    def test_logstore_logger_name_filter(self):
+        store = LogStore()
+        store.append(LogEntry(timestamp=1.0, level="INFO", logger_name="mutbot.web.server", message="a"))
+        store.append(LogEntry(timestamp=2.0, level="INFO", logger_name="mutbot.web.server.auth", message="b"))
+        store.append(LogEntry(timestamp=3.0, level="INFO", logger_name="mutagent.agent", message="c"))
+        results = store.query(logger_name="mutbot.web.server")
+        assert len(results) == 2
+        assert results[0].message == "b"  # newest first
+        assert results[1].message == "a"
+
+
+# ---------------------------------------------------------------------------
+# --tail 模式基础测试
+# ---------------------------------------------------------------------------
+
+class TestTailMode:
+
+    def test_tail_no_log_file(self, tmp_path, capsys):
+        """Tail mode should print error if no log file found."""
+        cli_main(["--dir", str(tmp_path), "logs", "-f", "-s", "nonexistent"])
+        output = capsys.readouterr().out
+        assert "No log file found" in output
+
+
+# ---------------------------------------------------------------------------
+# Session 发现兼容性（支持 session_id 格式文件名）
+# ---------------------------------------------------------------------------
+
+class TestSessionDiscovery:
+
+    def test_timestamp_sessions(self, tmp_path):
+        """Traditional YYYYMMDD_HHMMSS format."""
+        (tmp_path / "20260217_085924-log.log").write_text("line\n", encoding="utf-8")
+        (tmp_path / "20260217_085924-api.jsonl").write_text('{"type":"session"}\n', encoding="utf-8")
+        engine = LogQueryEngine(tmp_path)
+        sessions = engine.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0].timestamp == "20260217_085924"
+
+    def test_session_id_format(self, tmp_path):
+        """Hex session_id format (mutbot per-session API files)."""
+        (tmp_path / "a1b2c3d4e5f6-api.jsonl").write_text('{"type":"session"}\n{"type":"call"}\n', encoding="utf-8")
+        engine = LogQueryEngine(tmp_path)
+        sessions = engine.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0].timestamp == "a1b2c3d4e5f6"
+        assert sessions[0].api_file is not None
+        assert sessions[0].api_calls == 1
+
+    def test_server_log_with_prefix(self, tmp_path):
+        """Server log files with server- prefix."""
+        (tmp_path / "server-20260217_085924-log.log").write_text("line\n", encoding="utf-8")
+        engine = LogQueryEngine(tmp_path)
+        sessions = engine.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0].timestamp == "server-20260217_085924"
+
+    def test_mixed_formats(self, tmp_path):
+        """Both timestamp and session_id formats in same directory."""
+        (tmp_path / "server-20260217_085924-log.log").write_text("line\n", encoding="utf-8")
+        (tmp_path / "abc123def456-api.jsonl").write_text('{"type":"session"}\n', encoding="utf-8")
+        (tmp_path / "def789abc012-api.jsonl").write_text('{"type":"session"}\n', encoding="utf-8")
+        engine = LogQueryEngine(tmp_path)
+        sessions = engine.list_sessions()
+        assert len(sessions) == 3
+
+    def test_non_log_files_ignored(self, tmp_path):
+        """Non-log files should be ignored."""
+        (tmp_path / "readme.txt").write_text("hello\n", encoding="utf-8")
+        (tmp_path / "config.json").write_text("{}\n", encoding="utf-8")
+        engine = LogQueryEngine(tmp_path)
+        sessions = engine.list_sessions()
+        assert len(sessions) == 0
+
+    def test_resolve_by_session_id(self, tmp_path):
+        """Can query logs by session_id."""
+        content = "2026-02-17 08:59:24,301 INFO     test - message from session\n"
+        (tmp_path / "abc123-log.log").write_text(content, encoding="utf-8")
+        engine = LogQueryEngine(tmp_path)
+        results = engine.query_logs(session="abc123", limit=10)
+        assert len(results) == 1
+        assert "message from session" in results[0].message

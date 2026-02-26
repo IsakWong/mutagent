@@ -18,6 +18,9 @@ from pathlib import Path
 
 from mutagent.runtime.log_query import LogQueryEngine
 
+# 多行日志默认预览行数
+PREVIEW_LINES = 3
+
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
@@ -41,6 +44,9 @@ def main(argv: list[str] | None = None) -> None:
     logs_parser.add_argument("-n", "--limit", type=int, default=50, help="Max entries to return")
     logs_parser.add_argument("--from", dest="time_from", default="", help="Time range start (HH:MM:SS)")
     logs_parser.add_argument("--to", dest="time_to", default="", help="Time range end (HH:MM:SS)")
+    logs_parser.add_argument("-e", "--expand", action="store_true", help="Expand multiline log entries fully")
+    logs_parser.add_argument("--logger", default="", help="Filter by logger name (prefix match)")
+    logs_parser.add_argument("-f", "--tail", action="store_true", help="Follow log file in real time")
 
     # --- api ---
     api_parser = subparsers.add_parser("api", help="Query API call records")
@@ -117,6 +123,10 @@ def _cmd_sessions(engine: LogQueryEngine) -> None:
 
 
 def _cmd_logs(engine: LogQueryEngine, args: argparse.Namespace) -> None:
+    if args.tail:
+        _cmd_logs_tail(engine, args)
+        return
+
     entries = engine.query_logs(
         session=args.session,
         pattern=args.pattern,
@@ -124,21 +134,14 @@ def _cmd_logs(engine: LogQueryEngine, args: argparse.Namespace) -> None:
         limit=args.limit,
         time_from=args.time_from,
         time_to=args.time_to,
+        logger_name=args.logger,
     )
     if not entries:
         print("No matching log entries.")
         return
 
     for entry in entries:
-        # Extract time-only from timestamp for compact display
-        time_part = _extract_time_display(entry.timestamp)
-        # Shorten logger name (last component)
-        short_name = entry.logger_name.rsplit(".", 1)[-1] if entry.logger_name else ""
-        # Truncate message to single line for display
-        msg = entry.message.split("\n")[0]
-        if "\n" in entry.message:
-            msg += f" (+{entry.message.count(chr(10))} lines)"
-        print(f"{entry.line_no:>4d} | {time_part} {entry.level:<8s} {short_name:<20s} - {msg}")
+        _print_log_entry(entry, expand=args.expand)
 
 
 def _cmd_api(engine: LogQueryEngine, args: argparse.Namespace) -> None:
@@ -193,6 +196,111 @@ def _cmd_tools(engine: LogQueryEngine, args: argparse.Namespace) -> None:
             line = f" #{tc.index:02d} {tc.tool_name}()"
         result = tc.result_summary if tc.result_summary else "?"
         print(f"{line} \u2192 {result}")
+
+
+def _print_log_entry(entry, expand: bool = False) -> None:
+    """Print a single log entry with multiline support."""
+    time_part = _extract_time_display(entry.timestamp)
+    short_name = entry.logger_name.rsplit(".", 1)[-1] if entry.logger_name else ""
+
+    lines = entry.message.split("\n")
+    # 首行
+    print(f"{entry.line_no:>4d} | {time_part} {entry.level:<8s} {short_name:<20s} - {lines[0]}")
+
+    if len(lines) <= 1:
+        return
+
+    # 续行前缀：对齐首行的消息起始位置
+    cont_prefix = "     |          "
+
+    if expand:
+        # 完整展开所有续行
+        for line in lines[1:]:
+            print(f"{cont_prefix}{line}")
+    else:
+        # 预览前 PREVIEW_LINES 行（首行已输出，再输出 PREVIEW_LINES-1 行续行）
+        preview_remaining = PREVIEW_LINES - 1
+        for line in lines[1:preview_remaining + 1]:
+            print(f"{cont_prefix}{line}")
+        hidden = len(lines) - 1 - preview_remaining
+        if hidden > 0:
+            print(f"{cont_prefix}(+{hidden} lines, use -e to expand)")
+
+
+def _cmd_logs_tail(engine: LogQueryEngine, args: argparse.Namespace) -> None:
+    """Follow a log file in real time (--tail / -f)."""
+    import time
+
+    log_file = engine._resolve_log_file(args.session)
+    if log_file is None:
+        print("No log file found.")
+        return
+
+    from mutagent.runtime.log_query import _iter_log_entries, _LEVEL_VALUES
+    import re
+    import logging
+
+    min_level = _LEVEL_VALUES.get(args.level.upper(), logging.DEBUG)
+    compiled = re.compile(args.pattern) if args.pattern else None
+    logger_filter = args.logger
+
+    def _matches(entry) -> bool:
+        entry_level = _LEVEL_VALUES.get(entry.level, logging.DEBUG)
+        if entry_level < min_level:
+            return False
+        if compiled and not compiled.search(entry.message):
+            return False
+        if logger_filter:
+            if entry.logger_name != logger_filter and not entry.logger_name.startswith(logger_filter + "."):
+                return False
+        return True
+
+    # 先输出最近匹配的日志
+    entries = engine.query_logs(
+        session=args.session,
+        pattern=args.pattern,
+        level=args.level,
+        limit=args.limit,
+        logger_name=logger_filter,
+    )
+    for entry in entries:
+        _print_log_entry(entry, expand=args.expand)
+
+    # seek 到文件末尾，开始 tail
+    try:
+        with open(log_file, encoding="utf-8") as f:
+            f.seek(0, 2)  # seek to end
+            partial = ""
+            while True:
+                time.sleep(0.5)
+                new_data = f.read()
+                if not new_data:
+                    continue
+                # 拼接上次剩余的不完整行
+                text = partial + new_data
+                lines_raw = text.split("\n")
+                # 最后一项可能不完整
+                partial = lines_raw[-1]
+                complete_lines = lines_raw[:-1]
+                if not complete_lines:
+                    continue
+                # 写入临时文件解析 log entries
+                import tempfile
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".log", encoding="utf-8", delete=False
+                ) as tmp:
+                    tmp.write("\n".join(complete_lines) + "\n")
+                    tmp_path = tmp.name
+                try:
+                    from pathlib import Path
+                    for entry in _iter_log_entries(Path(tmp_path)):
+                        if _matches(entry):
+                            _print_log_entry(entry, expand=args.expand)
+                finally:
+                    import os
+                    os.unlink(tmp_path)
+    except KeyboardInterrupt:
+        pass
 
 
 def _extract_time_display(timestamp: str) -> str:
