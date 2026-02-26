@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
 import mutagent
 from mutagent.agent import Agent
@@ -27,7 +27,10 @@ def _get_tool_capture_enabled(agent: Agent) -> bool:
 
 @mutagent.impl(Agent.run)
 async def run(
-    self: Agent, input_stream: AsyncIterator[InputEvent], stream: bool = True
+    self: Agent,
+    input_stream: AsyncIterator[InputEvent],
+    stream: bool = True,
+    check_pending: Callable[[], bool] | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Run the agent conversation loop, consuming input events and yielding output events."""
     async for input_event in input_stream:
@@ -129,6 +132,11 @@ async def run(
                         results.append(result)
                     # Add tool results as a user message
                     self.messages.append(Message(role="user", tool_results=results))
+
+                    # Natural checkpoint: check for pending user input
+                    if check_pending and check_pending():
+                        logger.info("Pending input detected at tool round checkpoint, ending turn early")
+                        break
                 else:
                     # end_turn or no tool calls — done with this turn
                     break

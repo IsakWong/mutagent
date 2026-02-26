@@ -83,10 +83,21 @@ def get_model(self, name: str | None = None) -> dict:
                 result["model_id"] = name
                 return result
         elif isinstance(models, dict):
-            # dict 形式：仅按 key（别名）匹配
+            # dict 形式：key 为别名或 model_id
             if name in models:
+                model_val = models[name]
                 result = {k: v for k, v in prov_conf.items() if k != "models"}
-                result["model_id"] = models[name]
+                if isinstance(model_val, str):
+                    # alias → model_id（旧格式）
+                    result["model_id"] = model_val
+                elif isinstance(model_val, dict):
+                    # model_id = key，value 中的字段覆盖 provider 级别
+                    result["model_id"] = model_val.get("model_id", name)
+                    result.update({
+                        k: v for k, v in model_val.items() if k != "model_id"
+                    })
+                else:
+                    result["model_id"] = name
                 return result
     available = _collect_model_names(providers)
     raise SystemExit(

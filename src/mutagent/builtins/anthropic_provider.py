@@ -74,7 +74,11 @@ class AnthropicProvider(LLMProvider):
 
 
 def _messages_to_claude(messages: list[Message]) -> list[dict[str, Any]]:
-    """Convert internal Message list to Claude API messages format."""
+    """Convert internal Message list to Claude API messages format.
+
+    Handles consecutive same-role messages by merging them into a single
+    message with a content array (required by Anthropic API).
+    """
     result = []
     for msg in messages:
         if msg.role == "user" and msg.tool_results:
@@ -88,6 +92,9 @@ def _messages_to_claude(messages: list[Message]) -> list[dict[str, Any]]:
                 if tr.is_error:
                     block["is_error"] = True
                 content.append(block)
+            # Also include text content if present
+            if msg.content:
+                content.append({"type": "text", "text": msg.content})
             result.append({"role": "user", "content": content})
         elif msg.role == "assistant" and msg.tool_calls:
             content_list: list[dict[str, Any]] = []
@@ -103,7 +110,39 @@ def _messages_to_claude(messages: list[Message]) -> list[dict[str, Any]]:
             result.append({"role": "assistant", "content": content_list})
         else:
             result.append({"role": msg.role, "content": msg.content})
-    return result
+
+    # Merge consecutive same-role messages (Anthropic API requirement)
+    return _merge_consecutive_roles(result)
+
+
+def _merge_consecutive_roles(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge consecutive messages with the same role into one.
+
+    Anthropic API rejects consecutive same-role messages. This merges them
+    by converting content to an array of content blocks.
+    """
+    if not messages:
+        return messages
+    merged: list[dict[str, Any]] = [messages[0]]
+    for msg in messages[1:]:
+        if msg["role"] == merged[-1]["role"]:
+            # Same role — merge content into array
+            prev = merged[-1]
+            prev_content = _to_content_blocks(prev["content"])
+            cur_content = _to_content_blocks(msg["content"])
+            prev["content"] = prev_content + cur_content
+        else:
+            merged.append(msg)
+    return merged
+
+
+def _to_content_blocks(content: Any) -> list[dict[str, Any]]:
+    """Normalize message content to a list of content blocks."""
+    if isinstance(content, list):
+        return content
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}] if content else []
+    return []
 
 
 def _tools_to_claude(tools: list[ToolSchema]) -> list[dict[str, Any]]:

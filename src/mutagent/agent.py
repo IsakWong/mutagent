@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, AsyncIterator, Callable
 
 import mutagent
 
@@ -36,7 +36,10 @@ class Agent(mutagent.Declaration):
     max_tool_rounds: int
 
     async def run(
-        self, input_stream: AsyncIterator[InputEvent], stream: bool = True
+        self,
+        input_stream: AsyncIterator[InputEvent],
+        stream: bool = True,
+        check_pending: Callable[[], bool] | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Run the agent conversation loop, consuming input events and yielding output events.
 
@@ -49,12 +52,16 @@ class Agent(mutagent.Declaration):
         Args:
             input_stream: AsyncIterator of user input events.
             stream: Whether to use SSE streaming for the HTTP request.
+            check_pending: Optional callback that returns True if new input
+                is available. Checked between tool rounds — if True, the
+                current turn ends early so the outer loop can pick up the
+                new message.
 
         Yields:
             StreamEvent instances for each piece of incremental output.
             A "turn_done" event is yielded after each user message is fully processed.
         """
-        return agent_impl.run(self, input_stream, stream=stream)
+        return agent_impl.run(self, input_stream, stream=stream, check_pending=check_pending)
 
     async def step(self, stream: bool = True) -> AsyncIterator[StreamEvent]:
         """Execute a single LLM call, yielding streaming events.

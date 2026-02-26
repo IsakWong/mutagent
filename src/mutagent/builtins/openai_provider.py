@@ -74,7 +74,10 @@ class OpenAIProvider(LLMProvider):
 
 
 def _messages_to_openai(messages: list[Message]) -> list[dict[str, Any]]:
-    """Convert internal Message list to OpenAI messages format."""
+    """Convert internal Message list to OpenAI messages format.
+
+    Handles consecutive same-role messages by merging their content.
+    """
     result = []
     for msg in messages:
         if msg.role == "user" and msg.tool_results:
@@ -85,6 +88,9 @@ def _messages_to_openai(messages: list[Message]) -> list[dict[str, Any]]:
                     "content": tr.content,
                 }
                 result.append(entry)
+            # Also include text content as a separate user message if present
+            if msg.content:
+                result.append({"role": "user", "content": msg.content})
         elif msg.role == "assistant" and msg.tool_calls:
             entry = {"role": "assistant"}
             if msg.content:
@@ -105,7 +111,33 @@ def _messages_to_openai(messages: list[Message]) -> list[dict[str, Any]]:
             result.append(entry)
         else:
             result.append({"role": msg.role, "content": msg.content})
-    return result
+
+    # Merge consecutive same-role messages (except tool role)
+    return _merge_consecutive_openai(result)
+
+
+def _merge_consecutive_openai(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge consecutive same-role messages for OpenAI format.
+
+    Tool-role messages are never merged (each has a unique tool_call_id).
+    User/assistant messages with the same role are merged by concatenating content.
+    """
+    if not messages:
+        return messages
+    merged: list[dict[str, Any]] = [messages[0]]
+    for msg in messages[1:]:
+        prev = merged[-1]
+        if msg["role"] == prev["role"] and msg["role"] not in ("tool",):
+            # Merge content strings
+            prev_content = prev.get("content") or ""
+            cur_content = msg.get("content") or ""
+            if prev_content and cur_content:
+                prev["content"] = prev_content + "\n\n" + cur_content
+            elif cur_content:
+                prev["content"] = cur_content
+        else:
+            merged.append(msg)
+    return merged
 
 
 def _tools_to_openai(tools: list[ToolSchema]) -> list[dict[str, Any]]:
