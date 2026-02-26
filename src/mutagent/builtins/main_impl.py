@@ -22,8 +22,35 @@ from mutagent.runtime.log_store import (
 from mutagent.runtime.api_recorder import ApiRecorder
 from mutagent.tools import ToolSet
 from mutagent.userio import UserIO
+from mutagent.provider import LLMProvider
 
 logger = logging.getLogger(__name__)
+
+
+def _create_llm_client(
+    model_config: dict, api_recorder: ApiRecorder | None = None
+) -> LLMClient:
+    """从模型配置创建 LLMClient。
+
+    使用 resolve_class 按 provider 配置自动加载 LLMProvider 子类，
+    缺省 provider 为 AnthropicProvider（向后兼容）。
+    """
+    import mutobj
+
+    # 确保内置 provider 已注册
+    import mutagent.builtins.anthropic_provider  # noqa: F401
+    import mutagent.builtins.openai_provider  # noqa: F401
+
+    provider_path = model_config.get("provider", "AnthropicProvider")
+    provider_cls = mutobj.resolve_class(provider_path, base_cls=LLMProvider)
+    provider = provider_cls.from_config(model_config)
+
+    return LLMClient(
+        provider=provider,
+        model=model_config.get("model_id", ""),
+        api_recorder=api_recorder,
+    )
+
 
 SYSTEM_PROMPT = """\
 You are **mutagent**, a self-evolving Python AI Agent framework.
@@ -227,12 +254,7 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
     tool_set = ToolSet(auto_discover=True)
     tool_set.add(module_tools)
     tool_set.add(log_tools)
-    client = LLMClient(
-        model=model.get("model_id", ""),
-        api_key=model.get("auth_token", ""),
-        base_url=model.get("base_url", ""),
-        api_recorder=api_recorder,
-    )
+    client = _create_llm_client(model, api_recorder)
 
     # --- Sub-Agents & AgentToolkit ---
     agents_config = self.config.get("agents", {})
@@ -255,12 +277,7 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
             sub_model_name = agent_conf.get("model")
             if sub_model_name:
                 sub_model = self.config.get_model(sub_model_name)
-                sub_client = LLMClient(
-                    model=sub_model.get("model_id", ""),
-                    api_key=sub_model.get("auth_token", ""),
-                    base_url=sub_model.get("base_url", ""),
-                    api_recorder=api_recorder,
-                )
+                sub_client = _create_llm_client(sub_model, api_recorder)
             else:
                 sub_client = client
 

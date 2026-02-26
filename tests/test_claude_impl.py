@@ -1,22 +1,18 @@
-"""Tests for Claude API implementation (builtins/claude_impl.py)."""
+"""Tests for Claude API implementation (builtins/anthropic_provider.py)."""
 
 import json
 import os
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-import mutagent.builtins  # noqa: F401  -- register all @impl
-
 from mutagent.messages import Message, Response, ToolCall, ToolResult, ToolSchema
-
-from mutagent.builtins import claude_impl as _claude
-
-_messages_to_claude = _claude._messages_to_claude
-_tools_to_claude = _claude._tools_to_claude
-_response_from_claude = _claude._response_from_claude
+from mutagent.builtins.anthropic_provider import (
+    AnthropicProvider,
+    _messages_to_claude,
+    _tools_to_claude,
+    _response_from_claude,
+)
 
 
 class TestMessagesToClaude:
@@ -54,7 +50,6 @@ class TestMessagesToClaude:
         result = _messages_to_claude(msgs)
 
         content = result[0]["content"]
-        # No text block when content is empty
         assert len(content) == 1
         assert content[0]["type"] == "tool_use"
 
@@ -195,12 +190,20 @@ class TestResponseFromClaude:
         assert resp.message.tool_calls == []
 
 
+def _make_client():
+    """创建测试用 LLMClient（使用 AnthropicProvider）。"""
+    from mutagent.client import LLMClient
+    provider = AnthropicProvider(
+        base_url="https://api.anthropic.com",
+        api_key="test-key",
+    )
+    return LLMClient(provider=provider, model="claude-sonnet-4-20250514")
+
+
 class TestSendMessageIntegration:
 
     def test_send_message_success(self):
         """Test send_message with a mocked requests response (stream=False)."""
-        from mutagent.client import LLMClient
-
         mock_response_data = {
             "content": [{"type": "text", "text": "Hello from Claude!"}],
             "stop_reason": "end_turn",
@@ -212,15 +215,10 @@ class TestSendMessageIntegration:
         mock_resp.json.return_value = mock_response_data
 
         with patch("requests.post", return_value=mock_resp):
-            client = LLMClient(
-                model="claude-sonnet-4-20250514",
-                api_key="test-key",
-                base_url="https://api.anthropic.com",
-            )
+            client = _make_client()
             messages = [Message(role="user", content="Hi")]
             events = list(client.send_message(messages, [], stream=False))
 
-        # Find the response_done event
         resp_event = [e for e in events if e.type == "response_done"][0]
         resp = resp_event.response
         assert resp.message.content == "Hello from Claude!"
@@ -228,8 +226,6 @@ class TestSendMessageIntegration:
 
     def test_send_message_with_tools(self):
         """Test send_message includes tools in the request."""
-        from mutagent.client import LLMClient
-
         mock_response_data = {
             "content": [
                 {
@@ -254,11 +250,7 @@ class TestSendMessageIntegration:
         )]
 
         with patch("requests.post", return_value=mock_resp):
-            client = LLMClient(
-                model="claude-sonnet-4-20250514",
-                api_key="test-key",
-                base_url="https://api.anthropic.com",
-            )
+            client = _make_client()
             messages = [Message(role="user", content="Show me the code")]
             events = list(client.send_message(messages, tools, stream=False))
 
@@ -270,8 +262,6 @@ class TestSendMessageIntegration:
 
     def test_send_message_api_error(self):
         """Test send_message yields error event on API error."""
-        from mutagent.client import LLMClient
-
         mock_resp = MagicMock()
         mock_resp.status_code = 401
         mock_resp.json.return_value = {
@@ -279,11 +269,7 @@ class TestSendMessageIntegration:
         }
 
         with patch("requests.post", return_value=mock_resp):
-            client = LLMClient(
-                model="claude-sonnet-4-20250514",
-                api_key="bad-key",
-                base_url="https://api.anthropic.com",
-            )
+            client = _make_client()
             events = list(client.send_message(
                 [Message(role="user", content="Hi")], [], stream=False
             ))
@@ -300,15 +286,17 @@ _has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
 class TestClaudeRealAPI:
     """Integration tests using the real Claude API (skipped without API key)."""
 
+    def _make_real_client(self):
+        from mutagent.client import LLMClient
+        provider = AnthropicProvider(
+            base_url="https://api.anthropic.com",
+            api_key=os.environ["ANTHROPIC_API_KEY"],
+        )
+        return LLMClient(provider=provider, model="claude-sonnet-4-20250514")
+
     def test_real_send_message(self):
         """Send a real message to Claude API and verify the response structure."""
-        from mutagent.client import LLMClient
-
-        client = LLMClient(
-            model="claude-sonnet-4-20250514",
-            api_key=os.environ["ANTHROPIC_API_KEY"],
-            base_url="https://api.anthropic.com",
-        )
+        client = self._make_real_client()
         messages = [Message(role="user", content="Reply with exactly: PONG")]
         events = list(client.send_message(messages, []))
 
@@ -316,20 +304,14 @@ class TestClaudeRealAPI:
         resp = resp_event.response
         assert isinstance(resp, Response)
         assert resp.message.role == "assistant"
-        assert resp.message.content  # non-empty
+        assert resp.message.content
         assert resp.stop_reason == "end_turn"
         assert resp.usage.get("input_tokens", 0) > 0
         assert resp.usage.get("output_tokens", 0) > 0
 
     def test_real_send_message_with_tool_use(self):
         """Send a real message with tools and verify tool_use response."""
-        from mutagent.client import LLMClient
-
-        client = LLMClient(
-            model="claude-sonnet-4-20250514",
-            api_key=os.environ["ANTHROPIC_API_KEY"],
-            base_url="https://api.anthropic.com",
-        )
+        client = self._make_real_client()
         tools = [ToolSchema(
             name="get_weather",
             description="Get current weather for a city.",
@@ -348,7 +330,6 @@ class TestClaudeRealAPI:
         resp = resp_event.response
         assert isinstance(resp, Response)
         assert resp.message.role == "assistant"
-        # LLM should use the tool
         assert resp.stop_reason == "tool_use"
         assert len(resp.message.tool_calls) >= 1
         tc = resp.message.tool_calls[0]

@@ -2,32 +2,34 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterator
+import logging
+import time
+from typing import TYPE_CHECKING, Any, Iterator
 
 import mutagent
 
 if TYPE_CHECKING:
     from mutagent.messages import Message, StreamEvent, ToolSchema
+    from mutagent.provider import LLMProvider
     from mutagent.runtime.api_recorder import ApiRecorder
+
+logger = logging.getLogger(__name__)
 
 
 class LLMClient(mutagent.Declaration):
     """LLM client interface.
 
-    Provides a synchronous interface for sending messages to a language model.
-    The default implementation (Claude) is registered via @impl in
-    builtins/claude_impl.py.
+    组合 LLMProvider + API 录制。Provider 负责实际的 HTTP 调用，
+    LLMClient 负责调用计时、日志和 API 录制。
 
     Attributes:
+        provider: LLM 提供商实例。
         model: Model identifier (e.g. "claude-sonnet-4-20250514").
-        api_key: API key for authentication.
-        base_url: Base URL for the API endpoint.
         api_recorder: Optional API call recorder for session logging.
     """
 
+    provider: LLMProvider
     model: str
-    api_key: str
-    base_url: str
     api_recorder: ApiRecorder | None = None
 
     def send_message(
@@ -39,14 +41,7 @@ class LLMClient(mutagent.Declaration):
     ) -> Iterator[StreamEvent]:
         """Send messages to the LLM and yield streaming events.
 
-        When stream=True, the underlying HTTP request uses SSE streaming
-        and events are yielded incrementally as they arrive.
-
-        When stream=False, a regular HTTP request is made and the complete
-        response is wrapped into a small sequence of StreamEvents.
-
-        In both cases, the final event is always a ``response_done``
-        carrying the complete Response object.
+        Delegates to provider.send() and handles API recording.
 
         Args:
             messages: Conversation history.
@@ -57,10 +52,8 @@ class LLMClient(mutagent.Declaration):
         Yields:
             StreamEvent instances.
         """
-        return claude_impl.send_message(
-            self, messages, tools, system_prompt=system_prompt, stream=stream
-        )
+        ...
 
 
-from .builtins import claude_impl
-mutagent.register_module_impls(claude_impl)
+from .builtins import client_impl
+mutagent.register_module_impls(client_impl)

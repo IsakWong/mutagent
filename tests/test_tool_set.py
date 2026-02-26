@@ -6,6 +6,7 @@ import mutagent
 from mutagent.agent import Agent
 from mutagent.toolkits.agent_toolkit import AgentToolkit
 from mutagent.client import LLMClient
+from mutagent.builtins.anthropic_provider import AnthropicProvider
 from mutagent.toolkits.module_toolkit import ModuleToolkit
 from mutagent.messages import (
     InputEvent,
@@ -242,11 +243,8 @@ class TestAgentToolkitDeclaration:
 
 def _make_sub_agent(response_text="Sub-agent result"):
     """Create a sub-agent that returns a fixed response."""
-    client = LLMClient(
-        model="test-model",
-        api_key="test-key",
-        base_url="https://api.test.com",
-    )
+    provider = AnthropicProvider(base_url="https://api.test.com", api_key="test-key")
+    client = LLMClient(provider=provider, model="test-model")
     tool_set = ToolSet()
     agent = Agent(
         client=client,
@@ -365,9 +363,8 @@ class TestSystemAgentWithDelegate:
         system_ts.add(essential)
         system_ts.add(dt, methods=["delegate"])
 
-        client = LLMClient(
-            model="test-model", api_key="test-key", base_url="https://api.test.com",
-        )
+        provider = AnthropicProvider(base_url="https://api.test.com", api_key="test-key")
+        client = LLMClient(provider=provider, model="test-model")
 
         system_agent = Agent(
             client=client,

@@ -89,7 +89,7 @@ class TestSetupAgent:
     def test_setup_agent_returns_agent(self):
         agent = _create_test_agent(api_key="test-key")
         assert isinstance(agent, Agent)
-        assert agent.client.api_key == "test-key"
+        assert agent.client.provider.api_key == "test-key"
         assert agent.client.model == "claude-sonnet-4-20250514"
         assert agent.system_prompt
         assert agent.messages == []

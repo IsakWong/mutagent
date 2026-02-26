@@ -7,6 +7,7 @@ import pytest
 import mutagent
 from mutagent.agent import Agent
 from mutagent.client import LLMClient
+from mutagent.builtins.anthropic_provider import AnthropicProvider
 from mutagent.toolkits.module_toolkit import ModuleToolkit
 from mutagent.toolkits.log_toolkit import LogToolkit
 from mutagent.messages import (
@@ -69,11 +70,8 @@ def _make_stream_events_for_response(response: Response) -> list[StreamEvent]:
 def _make_agent(mock_client=None):
     """Create an Agent with ToolSet for testing."""
     if mock_client is None:
-        mock_client = LLMClient(
-            model="test-model",
-            api_key="test-key",
-            base_url="https://api.test.com",
-        )
+        provider = AnthropicProvider(base_url="https://api.test.com", api_key="test-key")
+        mock_client = LLMClient(provider=provider, model="test-model")
     mgr = ModuleManager()
     module_tools = ModuleToolkit(module_manager=mgr)
     tool_set = ToolSet()
@@ -116,12 +114,8 @@ class TestAgentLoop:
     @pytest.fixture
     def mock_client(self):
         """Create a mock LLM client."""
-        client = LLMClient(
-            model="test-model",
-            api_key="test-key",
-            base_url="https://api.test.com",
-        )
-        return client
+        provider = AnthropicProvider(base_url="https://api.test.com", api_key="test-key")
+        return LLMClient(provider=provider, model="test-model")
 
     @pytest.fixture
     def agent(self, mock_client):
