@@ -67,6 +67,11 @@ class App(mutagent.Declaration):
 def main() -> None:
     """Bootstrap mutagent.  Not overridable.
     """
+    import argparse
+    parser = argparse.ArgumentParser(description="mutagent — AI Agent Framework")
+    parser.add_argument("-V", "--version", action="version", version=f"mutagent {mutagent.__version__}")
+    parser.parse_args()
+
     app = App()
     app.load_config([
         "~/.mutagent/config.json",
