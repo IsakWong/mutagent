@@ -127,6 +127,9 @@ def _make_entries_for_toolkit(cls: type, instance: Any) -> dict[str, ToolEntry]:
         late_bound = _make_late_bound(instance, method_name)
         decl_method = get_declaration_method(cls, method_name)
         schema = make_schema(decl_method, tool_name)
+        # 允许 Toolkit 实例动态调整 schema
+        if hasattr(instance, '_customize_schema'):
+            schema = instance._customize_schema(method_name, schema)
         entries[tool_name] = ToolEntry(
             name=tool_name,
             callable=late_bound,
@@ -285,6 +288,9 @@ def add(self: ToolSet, source: Any, methods: list[str] | None = None) -> None:
         # Use declaration method for schema (preserves original signature/docstring)
         decl_method = get_declaration_method(cls, method_name)
         schema = make_schema(decl_method, tool_name)
+        # 允许 Toolkit 实例动态调整 schema
+        if hasattr(source, '_customize_schema'):
+            schema = source._customize_schema(method_name, schema)
         entries[tool_name] = ToolEntry(
             name=tool_name,
             callable=bound_method,

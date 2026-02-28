@@ -1,14 +1,68 @@
-"""mutagent.toolkits.web_toolkit -- WebToolkit declaration."""
+"""mutagent.toolkits.web_toolkit -- WebToolkit 及 SearchImpl/FetchImpl 声明。"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import mutagent
 from mutagent.tools import Toolkit
 
 if TYPE_CHECKING:
     from mutagent.config import Config
+    from mutagent.messages import ToolSchema
 
+
+# ---------------------------------------------------------------------------
+# Provider 抽象基类
+# ---------------------------------------------------------------------------
+
+class SearchImpl(mutagent.Declaration):
+    """搜索实现基类。
+
+    子类通过 mutobj 子类发现机制自动注册。
+    每个子类代表一种搜索后端（如 Jina、SearXNG）。
+
+    子类需设置 ``name`` 和 ``description`` 类变量。
+    """
+
+    name = ""
+    description = ""
+
+    async def search(self, query: str, max_results: int = 5) -> str:
+        """执行搜索并返回格式化结果。
+
+        Args:
+            query: 搜索关键词。
+            max_results: 最大返回结果数。
+        """
+        ...
+
+
+class FetchImpl(mutagent.Declaration):
+    """网页内容提取实现基类。
+
+    负责将原始 HTML 转换为 clean HTML 或 Markdown。
+    ``raw`` 格式由 WebToolkit 内置处理，不经过 FetchImpl。
+
+    子类需设置 ``name`` 和 ``description`` 类变量。
+    """
+
+    name = ""
+    description = ""
+
+    async def fetch(self, url: str, format: str = "markdown") -> str:
+        """获取并提取网页内容。
+
+        Args:
+            url: 网页 URL。
+            format: 输出格式 — ``"markdown"`` 或 ``"html"``。
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
+# WebToolkit
+# ---------------------------------------------------------------------------
 
 class WebToolkit(Toolkit):
     """Web 信息检索工具集。
@@ -19,30 +73,35 @@ class WebToolkit(Toolkit):
 
     config: Config
 
-    def search(self, query: str, max_results: int = 5) -> str:
+    def search(self, query: str, max_results: int = 5, impl: str = "") -> str:
         """搜索 Web 并返回结果摘要。
 
         Args:
             query: 搜索关键词。
             max_results: 最大返回结果数。
-
-        Returns:
-            搜索结果列表，包含标题、URL、摘要。
+            impl: 使用的搜索实现。
         """
-        return web_impl_jina.search(self, query, max_results)
+        ...
 
-    def fetch(self, url: str) -> str:
+    def fetch(self, url: str, format: str = "markdown", impl: str = "") -> str:
         """读取网页内容并返回文本。
 
         Args:
             url: 要读取的网页 URL。
-
-        Returns:
-            网页的主要文本内容（Markdown 格式）。
+            format: 输出格式 — ``"markdown"``（默认）、``"html"``（提取后的正文）、``"raw"``（原始网页）。
+            impl: 使用的获取实现。
         """
-        return web_impl_jina.fetch(self, url)
+        ...
+
+    def _customize_schema(self, method_name: str, schema: ToolSchema) -> ToolSchema:
+        """根据已发现的实现动态调整工具 schema。"""
+        ...
 
 
-from mutagent.builtins import web_impl_jina
-import mutagent
-mutagent.register_module_impls(web_impl_jina)
+# ---------------------------------------------------------------------------
+# 模块注册
+# ---------------------------------------------------------------------------
+
+from mutagent.builtins import web_toolkit_impl, web_jina  # noqa: E402
+mutagent.register_module_impls(web_toolkit_impl)
+mutagent.register_module_impls(web_jina)

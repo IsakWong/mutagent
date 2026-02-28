@@ -43,6 +43,10 @@ web = [
     "fastapi>=0.100",
     "uvicorn>=0.20",
 ]
+web-extract = [
+    "readability-lxml>=0.8",
+    "markdownify>=1.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/tiwb/mutagent"

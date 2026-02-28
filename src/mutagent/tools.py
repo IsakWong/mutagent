@@ -122,7 +122,20 @@ class Toolkit(mutagent.Declaration):
                 ...
     """
 
-    pass
+    def _customize_schema(self, method_name: str, schema: ToolSchema) -> ToolSchema:
+        """动态调整工具 schema。子类可覆盖。
+
+        在 ToolSet 生成 schema 后调用，允许 Toolkit 实例
+        根据运行时状态（如已发现的 provider）修改描述或参数。
+
+        Args:
+            method_name: 方法名称。
+            schema: 自动生成的 ToolSchema。
+
+        Returns:
+            调整后的 ToolSchema（或原样返回）。
+        """
+        return schema
 
 
 from .builtins import tool_set_impl
