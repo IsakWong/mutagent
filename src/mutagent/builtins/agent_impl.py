@@ -36,7 +36,9 @@ async def run(
     async for input_event in input_stream:
         if input_event.type == "user_message":
             logger.info("User message received (%d chars)", len(input_event.text))
-            self.messages.append(Message(role="user", content=input_event.text))
+            # hidden 消息不添加到对话历史（用于 setup 向导自动触发等场景）
+            if not input_event.data.get("hidden"):
+                self.messages.append(Message(role="user", content=input_event.text))
 
             max_rounds = getattr(self, 'max_tool_rounds', 25) or 25
             tool_round = 0
