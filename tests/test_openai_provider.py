@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mutagent.messages import Message, Response, StreamEvent, ToolCall, ToolResult, ToolSchema
+from mutagent.messages import Message, Response, StreamEvent, TextBlock, ToolUseBlock, ToolSchema
 from mutagent.builtins.openai_provider import (
     OpenAIProvider,
     _messages_to_openai,
@@ -15,21 +15,33 @@ from mutagent.builtins.openai_provider import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Helper: extract text/tool_calls from new Message model
+# ---------------------------------------------------------------------------
+
+def _get_text(msg: Message) -> str:
+    return "".join(b.text for b in msg.blocks if isinstance(b, TextBlock))
+
+
+def _get_tool_calls(msg: Message) -> list[ToolUseBlock]:
+    return [b for b in msg.blocks if isinstance(b, ToolUseBlock)]
+
+
 class TestMessagesToOpenAI:
 
     def test_simple_user_message(self):
-        msgs = [Message(role="user", content="Hello")]
+        msgs = [Message(role="user", blocks=[TextBlock(text="Hello")])]
         result = _messages_to_openai(msgs)
         assert result == [{"role": "user", "content": "Hello"}]
 
     def test_simple_assistant_message(self):
-        msgs = [Message(role="assistant", content="Hi there")]
+        msgs = [Message(role="assistant", blocks=[TextBlock(text="Hi there")])]
         result = _messages_to_openai(msgs)
         assert result == [{"role": "assistant", "content": "Hi there"}]
 
     def test_assistant_with_tool_calls_and_content(self):
-        tc = ToolCall(id="call_1", name="get_weather", arguments={"city": "Tokyo"})
-        msgs = [Message(role="assistant", content="Let me check.", tool_calls=[tc])]
+        tc = ToolUseBlock(id="call_1", name="get_weather", input={"city": "Tokyo"})
+        msgs = [Message(role="assistant", blocks=[TextBlock(text="Let me check."), tc])]
         result = _messages_to_openai(msgs)
 
         assert len(result) == 1
@@ -46,8 +58,8 @@ class TestMessagesToOpenAI:
         }
 
     def test_assistant_tool_calls_no_text(self):
-        tc = ToolCall(id="call_1", name="run_code", arguments={"code": "1+1"})
-        msgs = [Message(role="assistant", content="", tool_calls=[tc])]
+        tc = ToolUseBlock(id="call_1", name="run_code", input={"code": "1+1"})
+        msgs = [Message(role="assistant", blocks=[tc])]
         result = _messages_to_openai(msgs)
 
         assert len(result) == 1
@@ -58,9 +70,9 @@ class TestMessagesToOpenAI:
         assert result[0]["tool_calls"][0]["function"]["name"] == "run_code"
 
     def test_assistant_multiple_tool_calls(self):
-        tc1 = ToolCall(id="call_1", name="tool_a", arguments={"x": 1})
-        tc2 = ToolCall(id="call_2", name="tool_b", arguments={"y": 2})
-        msgs = [Message(role="assistant", content="", tool_calls=[tc1, tc2])]
+        tc1 = ToolUseBlock(id="call_1", name="tool_a", input={"x": 1})
+        tc2 = ToolUseBlock(id="call_2", name="tool_b", input={"y": 2})
+        msgs = [Message(role="assistant", blocks=[tc1, tc2])]
         result = _messages_to_openai(msgs)
 
         assert len(result) == 1
@@ -68,39 +80,46 @@ class TestMessagesToOpenAI:
         assert result[0]["tool_calls"][0]["id"] == "call_1"
         assert result[0]["tool_calls"][1]["id"] == "call_2"
 
-    def test_user_with_tool_results(self):
-        """Tool results become separate 'tool' role messages in OpenAI format."""
-        tr = ToolResult(tool_call_id="call_1", content="42")
-        msgs = [Message(role="user", tool_results=[tr])]
+    def test_assistant_with_completed_tool_calls(self):
+        """Completed ToolUseBlock generates 'tool' role messages in OpenAI format."""
+        tc = ToolUseBlock(id="call_1", name="get_weather", input={"city": "Tokyo"},
+                          status="done", result="42")
+        msgs = [Message(role="assistant", blocks=[tc])]
         result = _messages_to_openai(msgs)
 
-        assert len(result) == 1
-        assert result[0] == {
+        # assistant message + tool result message
+        assert len(result) == 2
+        assert result[0]["role"] == "assistant"
+        assert result[1] == {
             "role": "tool",
             "tool_call_id": "call_1",
             "content": "42",
         }
 
-    def test_user_with_multiple_tool_results(self):
-        """Multiple tool results become multiple 'tool' role messages."""
-        tr1 = ToolResult(tool_call_id="call_1", content="result_1")
-        tr2 = ToolResult(tool_call_id="call_2", content="result_2")
-        msgs = [Message(role="user", tool_results=[tr1, tr2])]
+    def test_assistant_with_multiple_completed_tool_calls(self):
+        """Multiple completed ToolUseBlocks generate multiple 'tool' role messages."""
+        tc1 = ToolUseBlock(id="call_1", name="tool_a", input={},
+                           status="done", result="result_1")
+        tc2 = ToolUseBlock(id="call_2", name="tool_b", input={},
+                           status="done", result="result_2")
+        msgs = [Message(role="assistant", blocks=[tc1, tc2])]
         result = _messages_to_openai(msgs)
 
-        assert len(result) == 2
-        assert result[0]["role"] == "tool"
-        assert result[0]["tool_call_id"] == "call_1"
-        assert result[0]["content"] == "result_1"
+        # assistant message + 2 tool result messages
+        assert len(result) == 3
+        assert result[0]["role"] == "assistant"
         assert result[1]["role"] == "tool"
-        assert result[1]["tool_call_id"] == "call_2"
-        assert result[1]["content"] == "result_2"
+        assert result[1]["tool_call_id"] == "call_1"
+        assert result[1]["content"] == "result_1"
+        assert result[2]["role"] == "tool"
+        assert result[2]["tool_call_id"] == "call_2"
+        assert result[2]["content"] == "result_2"
 
     def test_multi_turn_conversation(self):
         msgs = [
-            Message(role="user", content="Hi"),
-            Message(role="assistant", content="Hello!"),
-            Message(role="user", content="Help me"),
+            Message(role="user", blocks=[TextBlock(text="Hi")]),
+            Message(role="assistant", blocks=[TextBlock(text="Hello!")]),
+            Message(role="user", blocks=[TextBlock(text="Help me")]),
         ]
         result = _messages_to_openai(msgs)
         assert len(result) == 3
@@ -110,8 +129,8 @@ class TestMessagesToOpenAI:
 
     def test_tool_call_arguments_serialized_to_json(self):
         """Verify arguments dict is serialized to JSON string in OpenAI format."""
-        tc = ToolCall(id="call_x", name="func", arguments={"a": [1, 2], "b": True})
-        msgs = [Message(role="assistant", content="", tool_calls=[tc])]
+        tc = ToolUseBlock(id="call_x", name="func", input={"a": [1, 2], "b": True})
+        msgs = [Message(role="assistant", blocks=[tc])]
         result = _messages_to_openai(msgs)
 
         args_str = result[0]["tool_calls"][0]["function"]["arguments"]
@@ -174,7 +193,7 @@ class TestResponseFromOpenAI:
         }
         resp = _response_from_openai(data)
         assert resp.message.role == "assistant"
-        assert resp.message.content == "Hello!"
+        assert _get_text(resp.message) == "Hello!"
         assert resp.stop_reason == "end_turn"
         assert resp.usage == {"input_tokens": 10, "output_tokens": 5}
 
@@ -198,12 +217,13 @@ class TestResponseFromOpenAI:
             "usage": {"prompt_tokens": 20, "completion_tokens": 15},
         }
         resp = _response_from_openai(data)
-        assert resp.message.content == "I'll check that."
-        assert len(resp.message.tool_calls) == 1
-        tc = resp.message.tool_calls[0]
+        assert _get_text(resp.message) == "I'll check that."
+        tool_calls = _get_tool_calls(resp.message)
+        assert len(tool_calls) == 1
+        tc = tool_calls[0]
         assert tc.id == "call_123"
         assert tc.name == "get_weather"
-        assert tc.arguments == {"city": "Tokyo"}
+        assert tc.input == {"city": "Tokyo"}
         assert resp.stop_reason == "tool_use"
 
     def test_multiple_tool_calls(self):
@@ -236,10 +256,11 @@ class TestResponseFromOpenAI:
             "usage": {},
         }
         resp = _response_from_openai(data)
-        assert len(resp.message.tool_calls) == 2
-        assert resp.message.content == ""
-        assert resp.message.tool_calls[0].name == "tool_a"
-        assert resp.message.tool_calls[1].name == "tool_b"
+        tool_calls = _get_tool_calls(resp.message)
+        assert len(tool_calls) == 2
+        assert _get_text(resp.message) == ""
+        assert tool_calls[0].name == "tool_a"
+        assert tool_calls[1].name == "tool_b"
 
     def test_empty_content(self):
         data = {
@@ -250,8 +271,8 @@ class TestResponseFromOpenAI:
             "usage": {},
         }
         resp = _response_from_openai(data)
-        assert resp.message.content == ""
-        assert resp.message.tool_calls == []
+        assert _get_text(resp.message) == ""
+        assert _get_tool_calls(resp.message) == []
 
     def test_null_content_becomes_empty_string(self):
         data = {
@@ -262,7 +283,7 @@ class TestResponseFromOpenAI:
             "usage": {},
         }
         resp = _response_from_openai(data)
-        assert resp.message.content == ""
+        assert _get_text(resp.message) == ""
 
     def test_stop_reason_mapping_length(self):
         data = {
@@ -341,8 +362,9 @@ class TestResponseFromOpenAI:
             "usage": {},
         }
         resp = _response_from_openai(data)
-        assert len(resp.message.tool_calls) == 1
-        assert resp.message.tool_calls[0].arguments == {}
+        tool_calls = _get_tool_calls(resp.message)
+        assert len(tool_calls) == 1
+        assert tool_calls[0].input == {}
 
 
 # ---------------------------------------------------------------------------
@@ -381,7 +403,7 @@ class TestSendMessageIntegration:
     async def test_send_message_success(self):
         """Test send_message with mocked provider.send() (non-streaming path)."""
         response = Response(
-            message=Message(role="assistant", content="Hello from OpenAI!"),
+            message=Message(role="assistant", blocks=[TextBlock(text="Hello from OpenAI!")]),
             stop_reason="end_turn",
             usage={"input_tokens": 5, "output_tokens": 3},
         )
@@ -392,21 +414,21 @@ class TestSendMessageIntegration:
 
         client = _make_client()
         with patch.object(client.provider, "send", return_value=_mock_send_events(*mock_events)):
-            messages = [Message(role="user", content="Hi")]
+            messages = [Message(role="user", blocks=[TextBlock(text="Hi")])]
             events = await _collect_events(client.send_message(messages, [], stream=False))
 
         resp_event = [e for e in events if e.type == "response_done"][0]
         resp = resp_event.response
-        assert resp.message.content == "Hello from OpenAI!"
+        assert _get_text(resp.message) == "Hello from OpenAI!"
         assert resp.stop_reason == "end_turn"
         assert resp.usage["input_tokens"] == 5
         assert resp.usage["output_tokens"] == 3
 
     async def test_send_message_with_tools(self):
         """Test send_message includes tools in the request."""
-        tc = ToolCall(id="call_abc", name="get_weather", arguments={"city": "Tokyo"})
+        tc = ToolUseBlock(id="call_abc", name="get_weather", input={"city": "Tokyo"})
         response = Response(
-            message=Message(role="assistant", content="", tool_calls=[tc]),
+            message=Message(role="assistant", blocks=[tc]),
             stop_reason="tool_use",
             usage={"input_tokens": 10, "output_tokens": 8},
         )
@@ -424,15 +446,16 @@ class TestSendMessageIntegration:
 
         client = _make_client()
         with patch.object(client.provider, "send", return_value=_mock_send_events(*mock_events)):
-            messages = [Message(role="user", content="What's the weather?")]
+            messages = [Message(role="user", blocks=[TextBlock(text="What's the weather?")])]
             events = await _collect_events(client.send_message(messages, tools, stream=False))
 
         resp_event = [e for e in events if e.type == "response_done"][0]
         resp = resp_event.response
         assert resp.stop_reason == "tool_use"
-        assert len(resp.message.tool_calls) == 1
-        assert resp.message.tool_calls[0].name == "get_weather"
-        assert resp.message.tool_calls[0].arguments == {"city": "Tokyo"}
+        tool_calls = _get_tool_calls(resp.message)
+        assert len(tool_calls) == 1
+        assert tool_calls[0].name == "get_weather"
+        assert tool_calls[0].input == {"city": "Tokyo"}
 
     async def test_send_message_api_error(self):
         """Test send_message yields error event on API error."""
@@ -443,7 +466,7 @@ class TestSendMessageIntegration:
         client = _make_client()
         with patch.object(client.provider, "send", return_value=_mock_send_events(*mock_events)):
             events = await _collect_events(client.send_message(
-                [Message(role="user", content="Hi")], [], stream=False
+                [Message(role="user", blocks=[TextBlock(text="Hi")])], [], stream=False
             ))
 
         assert len(events) == 1
@@ -453,7 +476,7 @@ class TestSendMessageIntegration:
     async def test_send_message_text_delta_emitted(self):
         """Test that a text_delta event is emitted before response_done."""
         response = Response(
-            message=Message(role="assistant", content="Some text reply"),
+            message=Message(role="assistant", blocks=[TextBlock(text="Some text reply")]),
             stop_reason="end_turn",
             usage={"input_tokens": 5, "output_tokens": 4},
         )
@@ -465,7 +488,7 @@ class TestSendMessageIntegration:
         client = _make_client()
         with patch.object(client.provider, "send", return_value=_mock_send_events(*mock_events)):
             events = await _collect_events(client.send_message(
-                [Message(role="user", content="Hi")], [], stream=False
+                [Message(role="user", blocks=[TextBlock(text="Hi")])], [], stream=False
             ))
 
         text_events = [e for e in events if e.type == "text_delta"]
@@ -474,10 +497,10 @@ class TestSendMessageIntegration:
 
     async def test_send_message_tool_use_events(self):
         """Test that tool_use_start and tool_use_end events are emitted for each tool call."""
-        tc1 = ToolCall(id="call_1", name="tool_a", arguments={"x": 1})
-        tc2 = ToolCall(id="call_2", name="tool_b", arguments={"y": 2})
+        tc1 = ToolUseBlock(id="call_1", name="tool_a", input={"x": 1})
+        tc2 = ToolUseBlock(id="call_2", name="tool_b", input={"y": 2})
         response = Response(
-            message=Message(role="assistant", content="", tool_calls=[tc1, tc2]),
+            message=Message(role="assistant", blocks=[tc1, tc2]),
             stop_reason="tool_use",
             usage={"input_tokens": 10, "output_tokens": 12},
         )
@@ -492,7 +515,7 @@ class TestSendMessageIntegration:
         client = _make_client()
         with patch.object(client.provider, "send", return_value=_mock_send_events(*mock_events)):
             events = await _collect_events(client.send_message(
-                [Message(role="user", content="Do stuff")], [], stream=False
+                [Message(role="user", blocks=[TextBlock(text="Do stuff")])], [], stream=False
             ))
 
         tool_start_events = [e for e in events if e.type == "tool_use_start"]
@@ -502,10 +525,10 @@ class TestSendMessageIntegration:
         assert tool_start_events[0].tool_call.name == "tool_a"
         assert tool_start_events[1].tool_call.name == "tool_b"
 
-    async def test_send_message_system_prompt(self):
-        """Test that system_prompt is forwarded to provider.send()."""
+    async def test_send_message_prompts(self):
+        """Test that prompts are forwarded to provider.send()."""
         response = Response(
-            message=Message(role="assistant", content="OK"),
+            message=Message(role="assistant", blocks=[TextBlock(text="OK")]),
             stop_reason="end_turn",
             usage={"input_tokens": 15, "output_tokens": 1},
         )
@@ -516,24 +539,26 @@ class TestSendMessageIntegration:
         client = _make_client()
         captured_kwargs = {}
 
-        async def mock_send(model, messages, tools, system_prompt="", stream=True):
-            captured_kwargs["system_prompt"] = system_prompt
+        async def mock_send(model, messages, tools, prompts=None, stream=True):
+            captured_kwargs["prompts"] = prompts
             captured_kwargs["messages"] = messages
             for event in mock_events:
                 yield event
 
         with patch.object(client.provider, "send", side_effect=mock_send):
-            messages = [Message(role="user", content="Hi")]
+            messages = [Message(role="user", blocks=[TextBlock(text="Hi")])]
+            prompt_msg = Message(role="system", blocks=[TextBlock(text="You are helpful.")])
             await _collect_events(client.send_message(
-                messages, [], system_prompt="You are helpful.", stream=False
+                messages, [], prompts=[prompt_msg], stream=False
             ))
 
-        assert captured_kwargs["system_prompt"] == "You are helpful."
+        assert captured_kwargs["prompts"] is not None
+        assert len(captured_kwargs["prompts"]) == 1
 
-    async def test_send_message_no_system_prompt(self):
-        """Test that no system prompt is passed when system_prompt is empty."""
+    async def test_send_message_no_prompts(self):
+        """Test that no prompts are passed when prompts is None."""
         response = Response(
-            message=Message(role="assistant", content="OK"),
+            message=Message(role="assistant", blocks=[TextBlock(text="OK")]),
             stop_reason="end_turn",
             usage={"input_tokens": 5, "output_tokens": 1},
         )
@@ -544,17 +569,17 @@ class TestSendMessageIntegration:
         client = _make_client()
         captured_kwargs = {}
 
-        async def mock_send(model, messages, tools, system_prompt="", stream=True):
-            captured_kwargs["system_prompt"] = system_prompt
+        async def mock_send(model, messages, tools, prompts=None, stream=True):
+            captured_kwargs["prompts"] = prompts
             captured_kwargs["messages"] = messages
             for event in mock_events:
                 yield event
 
         with patch.object(client.provider, "send", side_effect=mock_send):
-            messages = [Message(role="user", content="Hi")]
+            messages = [Message(role="user", blocks=[TextBlock(text="Hi")])]
             await _collect_events(client.send_message(messages, [], stream=False))
 
-        assert captured_kwargs["system_prompt"] == ""
+        assert captured_kwargs["prompts"] is None
 
 
 class TestOpenAIProviderFromConfig:
@@ -596,14 +621,14 @@ class TestOpenAIRealAPI:
     async def test_real_send_message(self):
         """Send a real message to OpenAI API and verify the response structure."""
         client = self._make_real_client()
-        messages = [Message(role="user", content="Reply with exactly: PONG")]
+        messages = [Message(role="user", blocks=[TextBlock(text="Reply with exactly: PONG")])]
         events = await _collect_events(client.send_message(messages, []))
 
         resp_event = [e for e in events if e.type == "response_done"][0]
         resp = resp_event.response
         assert isinstance(resp, Response)
         assert resp.message.role == "assistant"
-        assert resp.message.content
+        assert _get_text(resp.message)
         assert resp.stop_reason == "end_turn"
         assert resp.usage.get("input_tokens", 0) > 0
         assert resp.usage.get("output_tokens", 0) > 0
@@ -622,7 +647,7 @@ class TestOpenAIRealAPI:
                 "required": ["city"],
             },
         )]
-        messages = [Message(role="user", content="What's the weather in Tokyo?")]
+        messages = [Message(role="user", blocks=[TextBlock(text="What's the weather in Tokyo?")])]
         events = await _collect_events(client.send_message(messages, tools))
 
         resp_event = [e for e in events if e.type == "response_done"][0]
@@ -630,7 +655,8 @@ class TestOpenAIRealAPI:
         assert isinstance(resp, Response)
         assert resp.message.role == "assistant"
         assert resp.stop_reason == "tool_use"
-        assert len(resp.message.tool_calls) >= 1
-        tc = resp.message.tool_calls[0]
+        tool_calls = _get_tool_calls(resp.message)
+        assert len(tool_calls) >= 1
+        tc = tool_calls[0]
         assert tc.name == "get_weather"
-        assert "city" in tc.arguments
+        assert "city" in tc.input

@@ -29,7 +29,7 @@ class LLMProvider(mutagent.Declaration):
         model: str,
         messages: list[Message],
         tools: list[ToolSchema],
-        system_prompt: str = "",
+        prompts: list[Message] | None = None,
         stream: bool = True,
     ) -> AsyncIterator[StreamEvent]:
         """发送请求到 LLM 后端，返回流式事件。
@@ -38,7 +38,7 @@ class LLMProvider(mutagent.Declaration):
             model: 模型 ID（如 "claude-sonnet-4-20250514"）。
             messages: 对话历史。
             tools: 可用工具 schema 列表。
-            system_prompt: 系统级指令。
+            prompts: 系统指令 Message 列表。
             stream: 是否使用 SSE 流式请求。
 
         Yields:

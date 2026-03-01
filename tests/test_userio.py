@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 
 import mutagent
-from mutagent.messages import Content, StreamEvent, ToolCall, ToolResult
+from mutagent.messages import Content, StreamEvent, ToolUseBlock, TextBlock
 from mutagent.userio import BlockHandler, UserIO
 from mutobj.core import DeclarationMeta, _DECLARED_METHODS
 
@@ -158,7 +158,7 @@ class TestUserIORenderEvent:
         assert captured.out == "Hello world"
 
     def test_tool_exec_start_with_args(self, userio, capsys):
-        tc = ToolCall(id="tc_1", name="Module-inspect", arguments={"module_path": "mutagent"})
+        tc = ToolUseBlock(id="tc_1", name="Module-inspect", input={"module_path": "mutagent"})
         event = StreamEvent(type="tool_exec_start", tool_call=tc)
         userio.render_event(event)
         captured = capsys.readouterr()
@@ -166,31 +166,34 @@ class TestUserIORenderEvent:
         assert 'module_path="mutagent"' in captured.out
 
     def test_tool_exec_start_no_args(self, userio, capsys):
-        tc = ToolCall(id="tc_1", name="Module-inspect", arguments={})
+        tc = ToolUseBlock(id="tc_1", name="Module-inspect", input={})
         event = StreamEvent(type="tool_exec_start", tool_call=tc)
         userio.render_event(event)
         captured = capsys.readouterr()
         assert "Module-inspect()" in captured.out
 
     def test_tool_exec_end(self, userio, capsys):
-        tr = ToolResult(tool_call_id="tc_1", content="Success result")
-        event = StreamEvent(type="tool_exec_end", tool_result=tr)
+        tc = ToolUseBlock(id="tc_1", name="Module-inspect", input={},
+                          status="done", result="Success result")
+        event = StreamEvent(type="tool_exec_end", tool_call=tc)
         userio.render_event(event)
         captured = capsys.readouterr()
         assert "\u2192" in captured.out
         assert "Success result" in captured.out
 
     def test_tool_exec_end_error(self, userio, capsys):
-        tr = ToolResult(tool_call_id="tc_1", content="Failed", is_error=True)
-        event = StreamEvent(type="tool_exec_end", tool_result=tr)
+        tc = ToolUseBlock(id="tc_1", name="Module-inspect", input={},
+                          status="done", result="Failed", is_error=True)
+        event = StreamEvent(type="tool_exec_end", tool_call=tc)
         userio.render_event(event)
         captured = capsys.readouterr()
         assert "\u2192" in captured.out
         assert "Failed" in captured.out
 
     def test_tool_exec_end_long_content_truncated(self, userio, capsys):
-        tr = ToolResult(tool_call_id="tc_1", content="\n".join(f"line {i}" for i in range(20)))
-        event = StreamEvent(type="tool_exec_end", tool_result=tr)
+        tc = ToolUseBlock(id="tc_1", name="Module-inspect", input={},
+                          status="done", result="\n".join(f"line {i}" for i in range(20)))
+        event = StreamEvent(type="tool_exec_end", tool_call=tc)
         userio.render_event(event)
         captured = capsys.readouterr()
         assert "..." in captured.out
@@ -1073,7 +1076,7 @@ class TestInputStreamInteractions:
 class TestEndToEnd:
 
     def test_ask_full_flow(self, capsys):
-        """Full flow: text_delta(ask block) → handler → pending → input_stream → data."""
+        """Full flow: text_delta(ask block) -> handler -> pending -> input_stream -> data."""
         handlers = discover_block_handlers()
         userio = UserIO(block_handlers=handlers)
         # Simulate LLM streaming an ask block

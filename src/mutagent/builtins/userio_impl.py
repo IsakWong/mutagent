@@ -172,14 +172,14 @@ def render_event(self, event) -> None:
             _process_text(self, event.text)
     elif event.type == "tool_exec_start":
         name = event.tool_call.name if event.tool_call else "?"
-        args = event.tool_call.arguments if event.tool_call else {}
+        args = event.tool_call.input if event.tool_call else {}
         call_str = _format_tool_call(name, args)
         print(f"\n{dim(call_str)}", flush=True)
     elif event.type == "tool_exec_end":
-        if event.tool_result:
-            is_error = event.tool_result.is_error
+        if event.tool_call:
+            is_error = event.tool_call.is_error
             result_str = _format_tool_result(
-                event.tool_result.content, is_error,
+                event.tool_call.result, is_error,
             )
             print(result_str, flush=True)
     elif event.type == "error":

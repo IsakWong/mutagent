@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 import mutagent
-from mutagent.messages import ToolCall, ToolResult, ToolSchema
+from mutagent.messages import ToolSchema, ToolUseBlock
 from mutagent.builtins.schema import get_declaration_method, make_schema
 from mutagent.tools import ToolEntry, ToolSet
 
@@ -335,28 +335,26 @@ def get_tools(self: ToolSet) -> list[ToolSchema]:
 
 
 @mutagent.impl(ToolSet.dispatch)
-async def dispatch(self: ToolSet, tool_call: ToolCall) -> ToolResult:
-    """Dispatch a tool call to the corresponding implementation."""
+async def dispatch(self: ToolSet, tool_call: ToolUseBlock) -> None:
+    """Dispatch a tool call, updating the ToolUseBlock in-place."""
     if self.auto_discover:
         _refresh_discovered(self)
     all_entries = _all_entries(self)
     entry = all_entries.get(tool_call.name)
     if entry is None:
-        return ToolResult(
-            tool_call_id=tool_call.id,
-            content=f"Unknown tool: {tool_call.name}",
-            is_error=True,
-        )
+        tool_call.status = "done"
+        tool_call.result = f"Unknown tool: {tool_call.name}"
+        tool_call.is_error = True
+        return
     try:
         fn = entry.callable
         if inspect.iscoroutinefunction(fn):
-            result = await fn(**tool_call.arguments)
+            result = await fn(**tool_call.input)
         else:
-            result = await asyncio.to_thread(fn, **tool_call.arguments)
-        return ToolResult(tool_call_id=tool_call.id, content=str(result))
+            result = await asyncio.to_thread(fn, **tool_call.input)
+        tool_call.status = "done"
+        tool_call.result = str(result)
     except Exception as e:
-        return ToolResult(
-            tool_call_id=tool_call.id,
-            content=f"{type(e).__name__}: {e}",
-            is_error=True,
-        )
+        tool_call.status = "done"
+        tool_call.result = f"{type(e).__name__}: {e}"
+        tool_call.is_error = True

@@ -20,7 +20,7 @@ async def delegate(self: AgentToolkit, agent_name: str, task: str) -> str:
     logger.info("Delegating to sub-agent '%s': %.100s", agent_name, task)
 
     # Clear message history (each call is independent)
-    agent.messages.clear()
+    agent.context.messages.clear()
 
     # Build async input stream with the task
     async def input_stream():

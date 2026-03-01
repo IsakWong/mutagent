@@ -8,7 +8,8 @@ import mutagent
 
 if TYPE_CHECKING:
     from mutagent.client import LLMClient
-    from mutagent.messages import InputEvent, StreamEvent, ToolCall, ToolResult
+    from mutagent.context import AgentContext
+    from mutagent.messages import InputEvent, StreamEvent, ToolUseBlock
     from mutagent.tools import ToolSet
 
 
@@ -20,20 +21,14 @@ class Agent(mutagent.Declaration):
     end_turn.
 
     Attributes:
-        client: The LLM client for sending messages.
-        tool_set: The tool set for tool management and dispatch.
-        system_prompt: System prompt for the LLM.
-        messages: Conversation history.
-        max_tool_rounds: Maximum number of tool call rounds per user
-            message before forcing the agent to stop and summarize.
-            Default 25.
+        llm: The LLM client for sending messages.
+        tools: The tool set for tool management and dispatch.
+        context: Agent context managing prompts, messages, and token tracking.
     """
 
-    client: LLMClient
-    tool_set: ToolSet
-    system_prompt: str
-    messages: list
-    max_tool_rounds: int
+    llm: LLMClient
+    tools: ToolSet
+    context: AgentContext
 
     async def run(
         self,
@@ -43,45 +38,26 @@ class Agent(mutagent.Declaration):
     ) -> AsyncIterator[StreamEvent]:
         """Run the agent conversation loop, consuming input events and yielding output events.
 
-        This is the main entry point. It consumes InputEvents from input_stream,
-        processes each through the LLM (with tool call loops), and yields
-        StreamEvents for each piece of incremental output.
-
-        The async generator runs until input_stream is exhausted.
-
         Args:
             input_stream: AsyncIterator of user input events.
             stream: Whether to use SSE streaming for the HTTP request.
             check_pending: Optional callback that returns True if new input
-                is available. Checked between tool rounds — if True, the
-                current turn ends early so the outer loop can pick up the
-                new message.
+                is available.
 
         Yields:
             StreamEvent instances for each piece of incremental output.
-            A "turn_done" event is yielded after each user message is fully processed.
         """
         return agent_impl.run(self, input_stream, stream=stream, check_pending=check_pending)
 
     async def step(self, stream: bool = True) -> AsyncIterator[StreamEvent]:
-        """Execute a single LLM call, yielding streaming events.
-
-        Args:
-            stream: Whether to use SSE streaming for the HTTP request.
-
-        Yields:
-            StreamEvent instances from the LLM client.
-        """
+        """Execute a single LLM call, yielding streaming events."""
         return agent_impl.step(self, stream=stream)
 
-    async def handle_tool_calls(self, tool_calls: list[ToolCall]) -> list[ToolResult]:
-        """Execute tool calls and return results.
+    async def handle_tool_calls(self, tool_calls: list[ToolUseBlock]) -> None:
+        """Execute tool calls, updating each ToolUseBlock in-place.
 
         Args:
-            tool_calls: List of tool calls from the LLM.
-
-        Returns:
-            List of tool results.
+            tool_calls: List of ToolUseBlock from the LLM response.
         """
         return await agent_impl.handle_tool_calls(self, tool_calls)
 

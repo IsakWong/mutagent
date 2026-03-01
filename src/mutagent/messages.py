@@ -6,62 +6,118 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 
+# ---------------------------------------------------------------------------
+# ContentBlock 类型体系
+# ---------------------------------------------------------------------------
+
 @dataclass
-class ToolCall:
-    """An LLM-initiated tool call.
+class ContentBlock:
+    """内容块基类。"""
 
-    Attributes:
-        id: Unique identifier for this tool call (assigned by the LLM).
-        name: Name of the tool to invoke.
-        arguments: Dictionary of arguments to pass to the tool.
-    """
-
-    id: str
-    name: str
-    arguments: dict[str, Any] = field(default_factory=dict)
+    type: str
 
 
 @dataclass
-class ToolResult:
-    """Result of executing a tool call.
+class TextBlock(ContentBlock):
+    """文本内容块。"""
 
-    Attributes:
-        tool_call_id: ID of the ToolCall this result corresponds to.
-        content: The string result content.
-        is_error: Whether this result represents an error.
+    type: str = "text"
+    text: str = ""
+
+
+@dataclass
+class ImageBlock(ContentBlock):
+    """图像内容块。data 与 url 二选一。"""
+
+    type: str = "image"
+    data: str = ""              # base64
+    media_type: str = ""
+    url: str = ""
+
+
+@dataclass
+class DocumentBlock(ContentBlock):
+    """文档内容块（PDF 等）。"""
+
+    type: str = "document"
+    data: str = ""              # base64
+    media_type: str = ""        # "application/pdf"
+
+
+@dataclass
+class ThinkingBlock(ContentBlock):
+    """Thinking 内容块。
+
+    thinking 非空 = 可见推理过程。
+    data 非空 = 被 Anthropic 安全系统屏蔽的加密数据（内容不可读，后续轮次原样回传）。
+    signature = Anthropic 加密签名，验证 thinking 未被篡改。
+    Provider 负责映射回 API 的 thinking / redacted_thinking type。
     """
 
-    tool_call_id: str
-    content: str
+    type: str = "thinking"
+    thinking: str = ""
+    signature: str = ""
+    data: str = ""
+
+
+@dataclass
+class ToolUseBlock(ContentBlock):
+    """工具调用块，合并调用请求与执行结果。
+
+    生命周期：请求(name/input) → 调度(status="running") → 完成(status="done")。
+    status: "" = 未调度, "running" = 执行中, "done" = 已完成。
+    """
+
+    type: str = "tool_use"
+    id: str = ""                # 工具调用标识（LLM 生成）
+    name: str = ""
+    input: dict[str, Any] = field(default_factory=dict)
+    # 执行状态与结果（框架执行后更新）
+    status: str = ""
+    result: str = ""
     is_error: bool = False
+    duration: float = 0         # 执行耗时（秒，0 = 未执行）
 
+
+# ---------------------------------------------------------------------------
+# Message
+# ---------------------------------------------------------------------------
 
 @dataclass
 class Message:
-    """A single message in the conversation.
+    """对话消息。
 
-    Attributes:
-        role: The role of the message sender ("user", "assistant").
-        content: Text content of the message.
-        tool_calls: List of tool calls (for assistant messages).
-        tool_results: List of tool results (for user messages containing results).
+    role: "user" | "assistant" | "system"
+    blocks: 内容块列表，唯一内容容器。
     """
 
     role: str
-    content: str = ""
-    tool_calls: list[ToolCall] = field(default_factory=list)
-    tool_results: list[ToolResult] = field(default_factory=list)
+    blocks: list[ContentBlock] = field(default_factory=list)
 
+    # --- 标识 ---
+    id: str = ""                # 消息标识（空 = 未分配，应用层生成）
+    label: str = ""             # 段标识（prompt: "base"/"memory"，对话消息通常为空）
+    sender: str = ""            # 创建者身份
+    model: str = ""             # AI 模型标识
+
+    # --- 事实性元数据 ---
+    timestamp: float = 0
+    duration: float = 0         # 生成耗时（秒）
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    # --- Provider 提示 ---
+    cacheable: bool = True
+    priority: int = 0           # Prompt 排序优先级（值越大越靠前）
+
+
+# ---------------------------------------------------------------------------
+# ToolSchema / Response / InputEvent / StreamEvent / Content（保留或适配）
+# ---------------------------------------------------------------------------
 
 @dataclass
 class ToolSchema:
-    """JSON Schema description of a tool for the LLM.
-
-    Attributes:
-        name: Tool name.
-        description: Human-readable description of what the tool does.
-        input_schema: JSON Schema object describing the tool's parameters.
-    """
+    """JSON Schema description of a tool for the LLM."""
 
     name: str
     description: str
@@ -70,13 +126,7 @@ class ToolSchema:
 
 @dataclass
 class Response:
-    """LLM response wrapper.
-
-    Attributes:
-        message: The response message from the LLM.
-        stop_reason: Why the LLM stopped ("end_turn", "tool_use", etc.).
-        usage: Token usage information.
-    """
+    """LLM response wrapper."""
 
     message: Message
     stop_reason: str = ""
@@ -85,68 +135,40 @@ class Response:
 
 @dataclass
 class InputEvent:
-    """A single event in a streaming input.
-
-    Attributes:
-        type: Event type. Currently only "user_message".
-        text: User message text (for user_message).
-        data: Structured data (interaction results, attachments, etc.).
-    """
+    """A single event in a streaming input."""
 
     type: str
     text: str = ""
-    data: dict = field(default_factory=dict)
+    data: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class StreamEvent:
     """A single event in a streaming LLM response.
 
-    Attributes:
-        type: Event type. One of:
-            "text_delta"      - Incremental text from the LLM.
-            "tool_use_start"  - LLM begins constructing a tool call.
-            "tool_use_delta"  - Incremental JSON for tool call arguments.
-            "tool_use_end"    - LLM finished a tool call block.
-            "tool_exec_start" - Agent begins executing a tool.
-            "tool_exec_end"   - Agent finished executing a tool.
-            "response_done"   - One LLM call completed; carries the full Response.
-            "turn_done"       - Agent finished processing one user message.
-            "error"           - An error occurred.
-        text: Text fragment (for text_delta).
-        tool_call: Tool call info (for tool_use_start, tool_exec_start).
-        tool_json_delta: Partial JSON string (for tool_use_delta).
-        tool_result: Tool execution result (for tool_exec_end).
-        response: Complete Response object (for response_done).
-        error: Error description (for error).
+    Event types:
+        "text_delta"      - 增量文本
+        "tool_use_start"  - LLM 开始构造工具调用
+        "tool_use_delta"  - 增量 JSON（工具参数）
+        "tool_use_end"    - LLM 完成工具调用块
+        "tool_exec_start" - Agent 开始执行工具（tool_call = ToolUseBlock）
+        "tool_exec_end"   - Agent 完成执行工具（tool_call = 已更新的 ToolUseBlock）
+        "response_done"   - 一次 LLM 调用完成，携带 Response
+        "turn_done"       - Agent 完成处理一条用户消息
+        "error"           - 错误
     """
 
     type: str
     text: str = ""
-    tool_call: Optional[ToolCall] = None
+    tool_call: Optional[ToolUseBlock] = None
     tool_json_delta: str = ""
-    tool_result: Optional[ToolResult] = None
     response: Optional[Response] = None
     error: str = ""
 
 
 @dataclass
 class Content:
-    """A structured content block for UserIO rendering.
-
-    Content serves as the unified data model for present() and block parsing.
-    It can originate from:
-    1. render_event parsing: mutagent:xxx blocks detected in LLM text stream.
-    2. present() direct creation: system components or tools construct Content.
-    3. Sub-Agent output: Sub-Agent StreamEvents converted to Content.
-
-    Attributes:
-        type: Block type (tasks, status, code, ask, confirm, agents, thinking, etc.).
-        body: Content body (raw text inside the block).
-        target: Target rendering area (empty string = main panel).
-        source: Source identifier (Agent name, system component name, etc.).
-        metadata: Additional attributes (e.g. code block's lang, file, etc.).
-    """
+    """A structured content block for UserIO rendering."""
 
     type: str
     body: str = ""

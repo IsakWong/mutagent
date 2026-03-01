@@ -17,7 +17,7 @@ async def send_message(
     self: LLMClient,
     messages: list[Message],
     tools: list[ToolSchema],
-    system_prompt: str = "",
+    prompts: list[Message] | None = None,
     stream: bool = True,
 ) -> AsyncIterator[StreamEvent]:
     """Send messages via provider and handle logging + recording."""
@@ -29,7 +29,7 @@ async def send_message(
 
     response_obj: Response | None = None
     async for event in self.provider.send(
-        self.model, messages, tools, system_prompt, stream
+        self.model, messages, tools, prompts, stream
     ):
         if event.type == "response_done":
             response_obj = event.response

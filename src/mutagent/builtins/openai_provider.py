@@ -7,11 +7,14 @@ from typing import Any, AsyncIterator
 import httpx
 
 from mutagent.messages import (
+    ContentBlock,
+    ImageBlock,
     Message,
     Response,
     StreamEvent,
-    ToolCall,
+    TextBlock,
     ToolSchema,
+    ToolUseBlock,
 )
 from mutagent.provider import LLMProvider
 
@@ -45,13 +48,17 @@ class OpenAIProvider(LLMProvider):
         model: str,
         messages: list[Message],
         tools: list[ToolSchema],
-        system_prompt: str = "",
+        prompts: list[Message] | None = None,
         stream: bool = True,
     ) -> AsyncIterator[StreamEvent]:
         """Send messages to OpenAI-compatible API and yield streaming events."""
         openai_messages = _messages_to_openai(messages)
-        if system_prompt:
-            openai_messages.insert(0, {"role": "system", "content": system_prompt})
+        if prompts:
+            # 将 prompts 转换为 system 消息插入到最前面
+            for msg in reversed(prompts):
+                for block in msg.blocks:
+                    if isinstance(block, TextBlock) and block.text:
+                        openai_messages.insert(0, {"role": "system", "content": block.text})
 
         payload: dict[str, Any] = {
             "model": model,
@@ -73,46 +80,85 @@ class OpenAIProvider(LLMProvider):
                 yield event
 
 
+# ---------------------------------------------------------------------------
+# Message → OpenAI API 转换
+# ---------------------------------------------------------------------------
+
 def _messages_to_openai(messages: list[Message]) -> list[dict[str, Any]]:
     """Convert internal Message list to OpenAI messages format.
 
-    Handles consecutive same-role messages by merging their content.
+    处理 blocks 模型：
+    - assistant 消息中 ToolUseBlock → tool_calls 字段
+    - 已完成的 ToolUseBlock → 生成 role:"tool" 结果消息
+    - ThinkingBlock 忽略
     """
-    result = []
+    result: list[dict[str, Any]] = []
     for msg in messages:
-        if msg.role == "user" and msg.tool_results:
-            for tr in msg.tool_results:
-                entry: dict[str, Any] = {
-                    "role": "tool",
-                    "tool_call_id": tr.tool_call_id,
-                    "content": tr.content,
-                }
-                result.append(entry)
-            # Also include text content as a separate user message if present
-            if msg.content:
-                result.append({"role": "user", "content": msg.content})
-        elif msg.role == "assistant" and msg.tool_calls:
-            entry = {"role": "assistant"}
-            if msg.content:
-                entry["content"] = msg.content
-            else:
-                entry["content"] = None
-            tool_calls_list = []
-            for tc in msg.tool_calls:
-                tool_calls_list.append({
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.name,
-                        "arguments": json.dumps(tc.arguments),
-                    },
-                })
-            entry["tool_calls"] = tool_calls_list
-            result.append(entry)
-        else:
-            result.append({"role": msg.role, "content": msg.content})
+        if msg.role == "assistant":
+            # 构建 assistant 消息
+            content_parts: list[str] = []
+            tool_calls_list: list[dict[str, Any]] = []
+            tool_results: list[dict[str, Any]] = []
 
-    # Merge consecutive same-role messages (except tool role)
+            for block in msg.blocks:
+                if isinstance(block, TextBlock) and block.text:
+                    content_parts.append(block.text)
+                elif isinstance(block, ToolUseBlock):
+                    tool_calls_list.append({
+                        "id": block.id,
+                        "type": "function",
+                        "function": {
+                            "name": block.name,
+                            "arguments": json.dumps(block.input),
+                        },
+                    })
+                    if block.status == "done":
+                        tool_results.append({
+                            "role": "tool",
+                            "tool_call_id": block.id,
+                            "content": block.result,
+                        })
+                # ThinkingBlock, ImageBlock 等 → 忽略
+
+            entry: dict[str, Any] = {"role": "assistant"}
+            content = "\n".join(content_parts) if content_parts else None
+            entry["content"] = content
+            if tool_calls_list:
+                entry["tool_calls"] = tool_calls_list
+            result.append(entry)
+
+            # 追加 tool results
+            result.extend(tool_results)
+        else:
+            # user 消息
+            content_parts = []
+            image_parts: list[dict[str, Any]] = []
+            for block in msg.blocks:
+                if isinstance(block, TextBlock) and block.text:
+                    content_parts.append(block.text)
+                elif isinstance(block, ImageBlock):
+                    if block.url:
+                        image_parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": block.url},
+                        })
+                    elif block.data:
+                        data_uri = f"data:{block.media_type};base64,{block.data}"
+                        image_parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": data_uri},
+                        })
+
+            if image_parts:
+                # 多模态：content 是 array
+                parts: list[dict[str, Any]] = []
+                if content_parts:
+                    parts.append({"type": "text", "text": "\n".join(content_parts)})
+                parts.extend(image_parts)
+                result.append({"role": msg.role, "content": parts})
+            else:
+                result.append({"role": msg.role, "content": "\n".join(content_parts)})
+
     return _merge_consecutive_openai(result)
 
 
@@ -120,7 +166,6 @@ def _merge_consecutive_openai(messages: list[dict[str, Any]]) -> list[dict[str, 
     """Merge consecutive same-role messages for OpenAI format.
 
     Tool-role messages are never merged (each has a unique tool_call_id).
-    User/assistant messages with the same role are merged by concatenating content.
     """
     if not messages:
         return messages
@@ -128,7 +173,6 @@ def _merge_consecutive_openai(messages: list[dict[str, Any]]) -> list[dict[str, 
     for msg in messages[1:]:
         prev = merged[-1]
         if msg["role"] == prev["role"] and msg["role"] not in ("tool",):
-            # Merge content strings
             prev_content = prev.get("content") or ""
             cur_content = msg.get("content") or ""
             if prev_content and cur_content:
@@ -155,13 +199,16 @@ def _tools_to_openai(tools: list[ToolSchema]) -> list[dict[str, Any]]:
     return result
 
 
+# ---------------------------------------------------------------------------
+# OpenAI API → 内部模型转换
+# ---------------------------------------------------------------------------
+
 def _response_from_openai(data: dict[str, Any]) -> Response:
     """Convert OpenAI API response to internal Response."""
     choice = data.get("choices", [{}])[0]
     message_data = choice.get("message", {})
     finish_reason = choice.get("finish_reason", "")
 
-    # Map finish_reason to stop_reason
     stop_reason_map = {
         "stop": "end_turn",
         "tool_calls": "tool_use",
@@ -170,36 +217,41 @@ def _response_from_openai(data: dict[str, Any]) -> Response:
     }
     stop_reason = stop_reason_map.get(finish_reason, finish_reason)
 
-    # Parse tool calls
-    tool_calls = []
+    blocks: list[ContentBlock] = []
+
+    # Text content
+    content = message_data.get("content", "") or ""
+    if content:
+        blocks.append(TextBlock(text=content))
+
+    # Tool calls
     for tc_data in message_data.get("tool_calls", []):
         func = tc_data.get("function", {})
         try:
             arguments = json.loads(func.get("arguments", "{}"))
         except json.JSONDecodeError:
             arguments = {}
-        tool_calls.append(ToolCall(
+        blocks.append(ToolUseBlock(
             id=tc_data.get("id", ""),
             name=func.get("name", ""),
-            arguments=arguments,
+            input=arguments,
         ))
 
-    # Parse usage
+    # Usage
     usage_data = data.get("usage", {})
-    usage = {}
+    usage: dict[str, int] = {}
     if "prompt_tokens" in usage_data:
         usage["input_tokens"] = usage_data["prompt_tokens"]
     if "completion_tokens" in usage_data:
         usage["output_tokens"] = usage_data["completion_tokens"]
 
-    message = Message(
-        role="assistant",
-        content=message_data.get("content", "") or "",
-        tool_calls=tool_calls,
-    )
-
+    message = Message(role="assistant", blocks=blocks)
     return Response(message=message, stop_reason=stop_reason, usage=usage)
 
+
+# ---------------------------------------------------------------------------
+# HTTP 发送
+# ---------------------------------------------------------------------------
 
 async def _send_no_stream(
     base_url: str,
@@ -225,12 +277,12 @@ async def _send_no_stream(
 
     response = _response_from_openai(data)
 
-    if response.message.content:
-        yield StreamEvent(type="text_delta", text=response.message.content)
-
-    for tc in response.message.tool_calls:
-        yield StreamEvent(type="tool_use_start", tool_call=tc)
-        yield StreamEvent(type="tool_use_end")
+    for block in response.message.blocks:
+        if isinstance(block, TextBlock) and block.text:
+            yield StreamEvent(type="text_delta", text=block.text)
+        elif isinstance(block, ToolUseBlock):
+            yield StreamEvent(type="tool_use_start", tool_call=block)
+            yield StreamEvent(type="tool_use_end")
 
     yield StreamEvent(type="response_done", response=response)
 
@@ -266,7 +318,6 @@ async def _send_stream(
                 return
 
             text_parts: list[str] = []
-            tool_calls: list[ToolCall] = []
             # Track tool call state by index
             tool_call_data: dict[int, dict[str, Any]] = {}
             stop_reason = ""
@@ -281,8 +332,8 @@ async def _send_stream(
 
                 data_str = line[6:]
                 if data_str == "[DONE]":
-                    # Assemble final response
-                    # Finalize any pending tool calls
+                    # Finalize pending tool calls
+                    tool_use_blocks: list[ToolUseBlock] = []
                     for idx in sorted(tool_call_data.keys()):
                         tc_info = tool_call_data[idx]
                         json_str = tc_info.get("args_json", "")
@@ -290,10 +341,10 @@ async def _send_stream(
                             arguments = json.loads(json_str) if json_str else {}
                         except json.JSONDecodeError:
                             arguments = {}
-                        tool_calls.append(ToolCall(
+                        tool_use_blocks.append(ToolUseBlock(
                             id=tc_info.get("id", ""),
                             name=tc_info.get("name", ""),
-                            arguments=arguments,
+                            input=arguments,
                         ))
                         yield StreamEvent(type="tool_use_end")
 
@@ -305,11 +356,14 @@ async def _send_stream(
                     }
                     stop_reason = stop_reason_map.get(finish_reason, finish_reason)
 
-                    message = Message(
-                        role="assistant",
-                        content="".join(text_parts),
-                        tool_calls=tool_calls,
-                    )
+                    # Build blocks
+                    blocks: list[ContentBlock] = []
+                    text = "".join(text_parts)
+                    if text:
+                        blocks.append(TextBlock(text=text))
+                    blocks.extend(tool_use_blocks)
+
+                    message = Message(role="assistant", blocks=blocks)
                     response = Response(
                         message=message,
                         stop_reason=stop_reason,
@@ -323,7 +377,7 @@ async def _send_stream(
                 except json.JSONDecodeError:
                     continue
 
-                # Usage chunk (with stream_options.include_usage)
+                # Usage chunk
                 if data.get("usage"):
                     usage_data = data["usage"]
                     if "prompt_tokens" in usage_data:
@@ -350,20 +404,18 @@ async def _send_stream(
                 for tc_delta in delta.get("tool_calls", []):
                     idx = tc_delta.get("index", 0)
                     if idx not in tool_call_data:
-                        # New tool call
                         func = tc_delta.get("function", {})
                         tool_call_data[idx] = {
                             "id": tc_delta.get("id", ""),
                             "name": func.get("name", ""),
                             "args_json": func.get("arguments", ""),
                         }
-                        tc = ToolCall(
+                        tc = ToolUseBlock(
                             id=tc_delta.get("id", ""),
                             name=func.get("name", ""),
                         )
                         yield StreamEvent(type="tool_use_start", tool_call=tc)
                     else:
-                        # Delta for existing tool call
                         func = tc_delta.get("function", {})
                         args_chunk = func.get("arguments", "")
                         if args_chunk:

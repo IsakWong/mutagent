@@ -12,6 +12,8 @@ from mutagent.config import Config
 from mutagent.agent import Agent
 from mutagent.toolkits.agent_toolkit import AgentToolkit
 from mutagent.client import LLMClient
+from mutagent.context import AgentContext
+from mutagent.messages import Message, TextBlock
 from mutagent.toolkits.log_toolkit import LogToolkit
 from mutagent.main import App
 from mutagent.toolkits.module_toolkit import ModuleToolkit
@@ -282,11 +284,14 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
                 sub_client = client
 
             sub_prompt = agent_conf.get("system_prompt", f"You are a sub-agent named '{agent_name}'.")
+            sub_context = AgentContext()
+            sub_context.prompts.append(
+                Message(role="system", blocks=[TextBlock(text=sub_prompt)], label="base")
+            )
             sub_agent = Agent(
-                client=sub_client,
-                tool_set=sub_tool_set,
-                system_prompt=sub_prompt,
-                messages=[],
+                llm=sub_client,
+                tools=sub_tool_set,
+                context=sub_context,
             )
             sub_tool_set.agent = sub_agent
             sub_agents[agent_name] = sub_agent
@@ -313,11 +318,16 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
             "and run Python code at runtime. Use the available tools to help "
             "the user with their tasks."
         )
+    context = AgentContext()
+    context.prompts.append(
+        Message(role="system", blocks=[TextBlock(text=system_prompt)], label="base")
+    )
+    if client.context_window:
+        context.context_window = client.context_window
     self.agent = Agent(
-        client=client,
-        tool_set=tool_set,
-        system_prompt=system_prompt,
-        messages=[],
+        llm=client,
+        tools=tool_set,
+        context=context,
     )
     tool_set.agent = self.agent
     return self.agent
@@ -333,7 +343,7 @@ def run(self) -> None:
     import asyncio
     import queue
     import threading
-    from mutagent.messages import InputEvent, StreamEvent
+    from mutagent.messages import InputEvent, StreamEvent, Message, TextBlock
 
     # 启动 asyncio event loop 线程
     loop = asyncio.new_event_loop()

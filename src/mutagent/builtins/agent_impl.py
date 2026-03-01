@@ -2,20 +2,27 @@
 
 import asyncio
 import logging
+import time
 from typing import AsyncIterator, Callable
 
 import mutagent
 from mutagent.agent import Agent
-from mutagent.messages import InputEvent, Message, StreamEvent, ToolCall, ToolResult
+from mutagent.messages import InputEvent, Message, StreamEvent, TextBlock, ToolUseBlock
 from mutagent.runtime.log_store import _tool_log_buffer
-from mutagent.tools import ToolEntry
 
 logger = logging.getLogger(__name__)
+
+MAX_TOOL_ROUNDS = 25
+
+
+def _get_tool_calls(msg: Message) -> list[ToolUseBlock]:
+    """从 Message.blocks 中提取 ToolUseBlock 列表。"""
+    return [b for b in msg.blocks if isinstance(b, ToolUseBlock)]
 
 
 def _get_tool_capture_enabled(agent: Agent) -> bool:
     """Check if tool log capture is enabled via any registered tool source's LogStore."""
-    entries = getattr(agent.tool_set, '_entries', None)
+    entries = getattr(agent.tools, '_entries', None)
     if not entries:
         return False
     for entry in entries.values():
@@ -36,11 +43,11 @@ async def run(
     async for input_event in input_stream:
         if input_event.type == "user_message":
             logger.info("User message received (%d chars)", len(input_event.text))
-            # hidden 消息不添加到对话历史（用于 setup 向导自动触发等场景）
             if not input_event.data.get("hidden"):
-                self.messages.append(Message(role="user", content=input_event.text))
+                self.context.messages.append(
+                    Message(role="user", blocks=[TextBlock(text=input_event.text)])
+                )
 
-            max_rounds = getattr(self, 'max_tool_rounds', 25) or 25
             tool_round = 0
 
             while True:
@@ -64,28 +71,33 @@ async def run(
                     )
                     break
 
-                # Add assistant message to history
-                self.messages.append(response.message)
-                logger.info("LLM stop_reason=%s, tool_calls=%d",
-                            response.stop_reason, len(response.message.tool_calls))
+                # Update token usage
+                self.context.update_usage(response.usage)
 
-                if response.message.tool_calls:
-                    # Check tool round limit
-                    if tool_round >= max_rounds:
+                # Add assistant message to history
+                self.context.messages.append(response.message)
+                tool_calls = _get_tool_calls(response.message)
+                logger.info("LLM stop_reason=%s, tool_calls=%d",
+                            response.stop_reason, len(tool_calls))
+
+                if tool_calls:
+                    if tool_round >= MAX_TOOL_ROUNDS:
                         logger.warning(
                             "Tool call limit reached (%d rounds). "
-                            "Injecting summary request.", max_rounds,
+                            "Injecting summary request.", MAX_TOOL_ROUNDS,
                         )
-                        self.messages.append(Message(
+                        self.context.messages.append(Message(
                             role="user",
-                            content="[System] Tool call limit reached. "
-                                    "Summarize your progress and what remains to be done.",
+                            blocks=[TextBlock(
+                                text="[System] Tool call limit reached. "
+                                     "Summarize your progress and what remains to be done.",
+                            )],
                         ))
-                        # Final LLM call to get summary
                         async for event in self.step(stream=stream):
                             yield event
                             if event.type == "response_done" and event.response:
-                                self.messages.append(event.response.message)
+                                self.context.update_usage(event.response.usage)
+                                self.context.messages.append(event.response.message)
                         break
 
                     tool_round += 1
@@ -94,53 +106,48 @@ async def run(
                         logger.warning(
                             "stop_reason=%s but %d tool_calls found in response, "
                             "executing tools anyway",
-                            response.stop_reason, len(response.message.tool_calls),
+                            response.stop_reason, len(tool_calls),
                         )
-                    # Handle tool calls, yielding execution events
-                    results = []
+
+                    # Execute tool calls
                     capture = _get_tool_capture_enabled(self)
-                    for call in response.message.tool_calls:
-                        logger.info("Executing tool: %s", call.name)
-                        args_str = str(call.arguments)
+                    for block in tool_calls:
+                        logger.info("Executing tool: %s", block.name)
+                        args_str = str(block.input)
                         if len(args_str) > 200:
                             args_str = args_str[:200] + f"...({len(args_str)} chars total)"
                         logger.debug("Tool args: %s", args_str)
-                        yield StreamEvent(type="tool_exec_start", tool_call=call)
 
+                        block.status = "running"
+                        yield StreamEvent(type="tool_exec_start", tool_call=block)
+
+                        t0 = time.monotonic()
                         if capture:
                             buf: list[str] = []
                             token = _tool_log_buffer.set(buf)
                             try:
-                                result = await self.tool_set.dispatch(call)
+                                await self.tools.dispatch(block)
                             finally:
                                 _tool_log_buffer.reset(token)
                             if buf:
-                                result = ToolResult(
-                                    tool_call_id=result.tool_call_id,
-                                    content=result.content + "\n\n[Tool Logs]\n" + "\n".join(buf),
-                                    is_error=result.is_error,
-                                )
+                                block.result += "\n\n[Tool Logs]\n" + "\n".join(buf)
                         else:
-                            result = await self.tool_set.dispatch(call)
+                            await self.tools.dispatch(block)
+
+                        block.duration = time.monotonic() - t0
 
                         logger.info("Tool %s result: %s (%d chars)",
-                                    call.name,
-                                    "error" if result.is_error else "ok",
-                                    len(result.content))
-                        logger.debug("Tool result content: %.200s", result.content)
-                        yield StreamEvent(
-                            type="tool_exec_end", tool_call=call, tool_result=result
-                        )
-                        results.append(result)
-                    # Add tool results as a user message
-                    self.messages.append(Message(role="user", tool_results=results))
+                                    block.name,
+                                    "error" if block.is_error else "ok",
+                                    len(block.result))
+                        logger.debug("Tool result content: %.200s", block.result)
+                        yield StreamEvent(type="tool_exec_end", tool_call=block)
 
                     # Natural checkpoint: check for pending user input
                     if check_pending and check_pending():
                         logger.info("Pending input detected at tool round checkpoint, ending turn early")
                         break
                 else:
-                    # end_turn or no tool calls — done with this turn
                     break
 
             yield StreamEvent(type="turn_done")
@@ -151,20 +158,20 @@ async def step(
     self: Agent, stream: bool = True
 ) -> AsyncIterator[StreamEvent]:
     """Execute a single LLM call, yielding streaming events."""
-    tools = self.tool_set.get_tools()
-    async for event in self.client.send_message(
-        self.messages, tools, system_prompt=self.system_prompt, stream=stream,
+    tools = self.tools.get_tools()
+    prompts = self.context.prepare_prompts()
+    messages = self.context.prepare_messages()
+    async for event in self.llm.send_message(
+        messages, tools, prompts=prompts, stream=stream,
     ):
         yield event
 
 
 @mutagent.impl(Agent.handle_tool_calls)
 async def handle_tool_calls(
-    self: Agent, tool_calls: list[ToolCall]
-) -> list[ToolResult]:
-    """Dispatch tool calls through the tool set."""
-    results = []
-    for call in tool_calls:
-        result = await self.tool_set.dispatch(call)
-        results.append(result)
-    return results
+    self: Agent, tool_calls: list[ToolUseBlock]
+) -> None:
+    """Dispatch tool calls through the tool set, updating blocks in-place."""
+    for block in tool_calls:
+        block.status = "running"
+        await self.tools.dispatch(block)

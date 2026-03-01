@@ -205,7 +205,7 @@ def render_event(self, event) -> None:
         console = _get_console(self)
         name = event.tool_call.name if event.tool_call else "?"
         args_summary = _summarize_args(
-            event.tool_call.arguments if event.tool_call else {}
+            event.tool_call.input if event.tool_call else {}
         )
         if args_summary:
             console.print(f"\n  [dim]\\[{name}({args_summary})]", highlight=False)
@@ -215,11 +215,11 @@ def render_event(self, event) -> None:
         # Flush buffered text before tool result to maintain display order
         _flush_text_buf(self, ps)
         console = _get_console(self)
-        if event.tool_result:
-            summary = event.tool_result.content[:100]
-            if len(event.tool_result.content) > 100:
+        if event.tool_call:
+            summary = event.tool_call.result[:100]
+            if len(event.tool_call.result) > 100:
                 summary += "..."
-            if event.tool_result.is_error:
+            if event.tool_call.is_error:
                 console.print(
                     f"  [red bold]-> \\[error] {summary}[/]", highlight=False,
                 )

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable
 import mutagent
 
 if TYPE_CHECKING:
-    from mutagent.messages import ToolCall, ToolResult, ToolSchema
+    from mutagent.messages import ToolSchema, ToolUseBlock
 
 
 @dataclass
@@ -92,14 +92,13 @@ class ToolSet(mutagent.Declaration):
         """
         return tool_set_impl.get_tools(self)
 
-    async def dispatch(self, tool_call: ToolCall) -> ToolResult:
-        """Dispatch a tool call to the corresponding implementation.
+    async def dispatch(self, tool_call: ToolUseBlock) -> None:
+        """Dispatch a tool call, updating the ToolUseBlock in-place.
+
+        Sets status/result/is_error/duration on the block.
 
         Args:
-            tool_call: The tool call from the LLM.
-
-        Returns:
-            The result of executing the tool.
+            tool_call: The ToolUseBlock from the LLM.
         """
         return await tool_set_impl.dispatch(self, tool_call)
 

@@ -78,7 +78,7 @@ class LLMClient(mutagent.Declaration):
         self,
         messages: list[Message],
         tools: list[ToolSchema],
-        system_prompt: str = "",
+        prompts: list[Message] | None = None,
         stream: bool = True,
     ) -> AsyncIterator[StreamEvent]:
         """Send messages to the LLM and yield streaming events.
@@ -88,7 +88,7 @@ class LLMClient(mutagent.Declaration):
         Args:
             messages: Conversation history.
             tools: Available tool schemas for the LLM to use.
-            system_prompt: System-level instruction for the LLM.
+            prompts: System instruction Message list.
             stream: Whether to use SSE streaming for the HTTP request.
 
         Yields:

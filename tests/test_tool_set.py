@@ -4,6 +4,7 @@ import pytest
 
 import mutagent
 from mutagent.agent import Agent
+from mutagent.context import AgentContext
 from mutagent.toolkits.agent_toolkit import AgentToolkit
 from mutagent.client import LLMClient
 from mutagent.builtins.anthropic_provider import AnthropicProvider
@@ -13,8 +14,8 @@ from mutagent.messages import (
     Message,
     Response,
     StreamEvent,
-    ToolCall,
-    ToolResult,
+    TextBlock,
+    ToolUseBlock,
     ToolSchema,
 )
 from mutagent.runtime.module_manager import ModuleManager
@@ -22,6 +23,18 @@ from mutagent.tools import ToolEntry, ToolSet
 from mutobj.core import DeclarationMeta, _DECLARED_METHODS
 
 import mutagent.builtins  # noqa: F401  -- register all @impl
+
+
+# ---------------------------------------------------------------------------
+# Helper: extract text/tool_calls from new Message model
+# ---------------------------------------------------------------------------
+
+def _get_text(msg: Message) -> str:
+    return "".join(b.text for b in msg.blocks if isinstance(b, TextBlock))
+
+
+def _get_tool_calls(msg: Message) -> list[ToolUseBlock]:
+    return [b for b in msg.blocks if isinstance(b, ToolUseBlock)]
 
 
 # ---------------------------------------------------------------------------
@@ -116,11 +129,10 @@ class TestToolSetRemove:
 
     async def test_remove_then_dispatch_fails(self, populated_set):
         populated_set.remove("Module-inspect")
-        result = await populated_set.dispatch(
-            ToolCall(id="tc_1", name="Module-inspect", arguments={})
-        )
-        assert result.is_error
-        assert "Unknown tool" in result.content
+        block = ToolUseBlock(id="tc_1", name="Module-inspect", input={})
+        await populated_set.dispatch(block)
+        assert block.is_error
+        assert "Unknown tool" in block.result
 
 
 class TestToolSetQuery:
@@ -156,34 +168,34 @@ class TestToolSetDispatch:
         mgr.cleanup()
 
     async def test_dispatch_inspect(self, tool_set):
-        result = await tool_set.dispatch(
-            ToolCall(id="tc_1", name="Module-inspect", arguments={"module_path": "mutagent"})
-        )
-        assert not result.is_error
-        assert "mutagent" in result.content
+        block = ToolUseBlock(id="tc_1", name="Module-inspect", input={"module_path": "mutagent"})
+        await tool_set.dispatch(block)
+        assert not block.is_error
+        assert block.status == "done"
+        assert "mutagent" in block.result
 
     async def test_dispatch_define(self, tool_set):
-        result = await tool_set.dispatch(
-            ToolCall(id="tc_2", name="Module-define",
-                     arguments={"module_path": "test_ts_dispatch.mod", "source": "x = 42\n"})
-        )
-        assert not result.is_error
-        assert "OK" in result.content
+        block = ToolUseBlock(id="tc_2", name="Module-define",
+                             input={"module_path": "test_ts_dispatch.mod", "source": "x = 42\n"})
+        await tool_set.dispatch(block)
+        assert not block.is_error
+        assert block.status == "done"
+        assert "OK" in block.result
 
     async def test_dispatch_unknown_tool(self, tool_set):
-        result = await tool_set.dispatch(
-            ToolCall(id="tc_3", name="nonexistent_tool", arguments={})
-        )
-        assert result.is_error
-        assert "Unknown tool" in result.content
+        block = ToolUseBlock(id="tc_3", name="nonexistent_tool", input={})
+        await tool_set.dispatch(block)
+        assert block.is_error
+        assert block.status == "done"
+        assert "Unknown tool" in block.result
 
     async def test_dispatch_with_error(self, tool_set):
-        result = await tool_set.dispatch(
-            ToolCall(id="tc_4", name="Module-save",
-                     arguments={"module_path": "nonexistent.mod"})
-        )
+        block = ToolUseBlock(id="tc_4", name="Module-save",
+                             input={"module_path": "nonexistent.mod"})
+        await tool_set.dispatch(block)
         # save for unpatched module returns error string, not exception
-        assert "Error" in result.content
+        assert block.status == "done"
+        assert "Error" in block.result
 
 
 class TestToolSetEmptyState:
@@ -194,8 +206,9 @@ class TestToolSetEmptyState:
 
     async def test_empty_dispatch_fails(self):
         ts = ToolSet()
-        result = await ts.dispatch(ToolCall(id="tc_1", name="anything", arguments={}))
-        assert result.is_error
+        block = ToolUseBlock(id="tc_1", name="anything", input={})
+        await ts.dispatch(block)
+        assert block.is_error
 
     def test_empty_query_returns_none(self):
         ts = ToolSet()
@@ -246,16 +259,19 @@ def _make_sub_agent(response_text="Sub-agent result"):
     provider = AnthropicProvider(base_url="https://api.test.com", api_key="test-key")
     client = LLMClient(provider=provider, model="test-model")
     tool_set = ToolSet()
+    context = AgentContext()
+    context.prompts.append(
+        Message(role="system", blocks=[TextBlock(text="You are a test sub-agent.")], label="base")
+    )
     agent = Agent(
-        client=client,
-        tool_set=tool_set,
-        system_prompt="You are a test sub-agent.",
-        messages=[],
+        llm=client,
+        tools=tool_set,
+        context=context,
     )
     tool_set.agent = agent
 
     response = Response(
-        message=Message(role="assistant", content=response_text),
+        message=Message(role="assistant", blocks=[TextBlock(text=response_text)]),
         stop_reason="end_turn",
     )
 
@@ -263,7 +279,7 @@ def _make_sub_agent(response_text="Sub-agent result"):
         yield StreamEvent(type="text_delta", text=response_text)
         yield StreamEvent(type="response_done", response=response)
 
-    agent.client.send_message = mock_send
+    agent.llm.send_message = mock_send
     return agent
 
 
@@ -287,23 +303,23 @@ class TestAgentToolkitDelegate:
         # First call
         await dt.delegate(agent_name="helper", task="First task")
         # After delegate, messages should contain the conversation
-        assert len(sub.messages) > 0
+        assert len(sub.context.messages) > 0
 
         # Second call should clear messages first
         async def mock_send_2(*a, **k):
             yield StreamEvent(type="text_delta", text="Second response")
             yield StreamEvent(type="response_done", response=Response(
-                message=Message(role="assistant", content="Second response"),
+                message=Message(role="assistant", blocks=[TextBlock(text="Second response")]),
                 stop_reason="end_turn",
             ))
 
-        sub.client.send_message = mock_send_2
+        sub.llm.send_message = mock_send_2
         result = await dt.delegate(agent_name="helper", task="Second task")
         assert result == "Second response"
         # Messages should only contain conversation from second call
-        user_msgs = [m for m in sub.messages if m.role == "user"]
+        user_msgs = [m for m in sub.context.messages if m.role == "user"]
         assert len(user_msgs) == 1
-        assert user_msgs[0].content == "Second task"
+        assert _get_text(user_msgs[0]) == "Second task"
 
     async def test_delegate_lists_available_agents(self):
         sub1 = _make_sub_agent()
@@ -319,7 +335,7 @@ class TestAgentToolkitDelegate:
         dt = AgentToolkit(agents={"helper": sub})
 
         # Sub-agent's ToolSet has no delegate tool
-        sub_tools = sub.tool_set.get_tools()
+        sub_tools = sub.tools.get_tools()
         tool_names = {t.name for t in sub_tools}
         assert "Agent-delegate" not in tool_names
 
@@ -339,12 +355,12 @@ class TestAgentToolkitRegistration:
         assert schemas[0].name == "Agent-delegate"
 
         # Dispatch through ToolSet
-        result = await ts.dispatch(
-            ToolCall(id="tc_1", name="Agent-delegate",
-                     arguments={"agent_name": "helper", "task": "Do something"})
-        )
-        assert not result.is_error
-        assert "Result from sub" in result.content
+        block = ToolUseBlock(id="tc_1", name="Agent-delegate",
+                             input={"agent_name": "helper", "task": "Do something"})
+        await ts.dispatch(block)
+        assert not block.is_error
+        assert block.status == "done"
+        assert "Result from sub" in block.result
 
 
 class TestSystemAgentWithDelegate:
@@ -367,11 +383,14 @@ class TestSystemAgentWithDelegate:
         provider = AnthropicProvider(base_url="https://api.test.com", api_key="test-key")
         client = LLMClient(provider=provider, model="test-model")
 
+        context = AgentContext()
+        context.prompts.append(
+            Message(role="system", blocks=[TextBlock(text="You are the system agent.")], label="base")
+        )
         system_agent = Agent(
-            client=client,
-            tool_set=system_ts,
-            system_prompt="You are the system agent.",
-            messages=[],
+            llm=client,
+            tools=system_ts,
+            context=context,
         )
         system_ts.agent = system_agent
 
@@ -381,19 +400,19 @@ class TestSystemAgentWithDelegate:
         assert "Agent-delegate" in tool_names
 
         # Simulate: LLM calls delegate tool
+        tc = ToolUseBlock(
+            id="tc_1", name="Agent-delegate",
+            input={"agent_name": "worker", "task": "Do the work"},
+        )
         tool_response = Response(
             message=Message(
                 role="assistant",
-                content="Delegating...",
-                tool_calls=[ToolCall(
-                    id="tc_1", name="Agent-delegate",
-                    arguments={"agent_name": "worker", "task": "Do the work"},
-                )],
+                blocks=[TextBlock(text="Delegating..."), tc],
             ),
             stop_reason="tool_use",
         )
         final_response = Response(
-            message=Message(role="assistant", content="Task complete."),
+            message=Message(role="assistant", blocks=[TextBlock(text="Task complete.")]),
             stop_reason="end_turn",
         )
 
@@ -409,7 +428,7 @@ class TestSystemAgentWithDelegate:
                 yield StreamEvent(type="text_delta", text="Task complete.")
                 yield StreamEvent(type="response_done", response=final_response)
 
-        system_agent.client.send_message = mock_send
+        system_agent.llm.send_message = mock_send
 
         # Run system agent
         async def input_stream():
@@ -425,10 +444,14 @@ class TestSystemAgentWithDelegate:
         assert "Task complete." in text
 
         # Verify the delegate tool was called and result was fed back
-        assert len(system_agent.messages) == 4  # user, assistant(delegate), user(result), assistant(final)
-        tool_result_msg = system_agent.messages[2]
-        assert len(tool_result_msg.tool_results) == 1
-        assert "Sub-agent completed the task" in tool_result_msg.tool_results[0].content
+        # New model: messages are [user, assistant(delegate+tooluse), assistant(final)]
+        # The tool result is on the ToolUseBlock in the assistant message
+        assert len(system_agent.context.messages) == 3  # user, assistant(delegate with done tool), assistant(final)
+        assistant_msg = system_agent.context.messages[1]
+        tool_calls = _get_tool_calls(assistant_msg)
+        assert len(tool_calls) == 1
+        assert tool_calls[0].status == "done"
+        assert "Sub-agent completed the task" in tool_calls[0].result
 
         mgr.cleanup()
 
@@ -455,7 +478,7 @@ class TestToolSetAutoDiscover:
         return ts
 
     def test_auto_discover_finds_new_toolkit(self, tool_set, mgr):
-        """define creating a Toolkit subclass → auto-discovered."""
+        """define creating a Toolkit subclass -> auto-discovered."""
         mgr.patch_module("test_discover.tools", (
             "import mutagent\n"
             "\n"
@@ -503,11 +526,11 @@ class TestToolSetAutoDiscover:
             "        '''\n"
             "        return str(a + b)\n"
         ))
-        result = await tool_set.dispatch(
-            ToolCall(id="tc_1", name="Calculator-add_numbers", arguments={"a": 3, "b": 4})
-        )
-        assert not result.is_error
-        assert "7" in result.content
+        block = ToolUseBlock(id="tc_1", name="Calculator-add_numbers", input={"a": 3, "b": 4})
+        await tool_set.dispatch(block)
+        assert not block.is_error
+        assert block.status == "done"
+        assert "7" in block.result
 
     def test_pre_registered_not_duplicated(self, tool_set, mgr):
         """Classes added via add() should be skipped by auto-discovery."""
@@ -529,12 +552,12 @@ class TestToolSetAutoDiscover:
         # Dispatch should use the pre-registered one, not the auto-discovered
         # Conflicting generates "Conflicting-inspect_module" which doesn't
         # conflict with "Module-inspect", so both should exist
-        result = await tool_set.dispatch(
-            ToolCall(id="tc_1", name="Module-inspect",
-                     arguments={"module_path": "mutagent"})
-        )
-        assert not result.is_error
-        assert "mutagent" in result.content
+        block = ToolUseBlock(id="tc_1", name="Module-inspect",
+                             input={"module_path": "mutagent"})
+        await tool_set.dispatch(block)
+        assert not block.is_error
+        assert block.status == "done"
+        assert "mutagent" in block.result
 
     def test_complex_ctor_skipped(self, tool_set, mgr):
         """Toolkit subclass that needs constructor args is skipped."""
@@ -551,7 +574,7 @@ class TestToolSetAutoDiscover:
         schemas = tool_set.get_tools()
         names = {s.name for s in schemas}
         # The tool should not appear (can't instantiate without db)
-        # Note: mutobj Declaration may or may not require args — depends on __init__
+        # Note: mutobj Declaration may or may not require args -- depends on __init__
         # If it does auto-instantiate, that's OK too
 
     def test_auto_discover_false_no_scan(self, mgr):
@@ -623,10 +646,9 @@ class TestToolSetLateBind:
             "        return str(x * 2)\n"
         ))
         # First call: x * 2
-        result = await tool_set.dispatch(
-            ToolCall(id="tc_1", name="MyTools-compute", arguments={"x": 5})
-        )
-        assert result.content == "10"
+        block = ToolUseBlock(id="tc_1", name="MyTools-compute", input={"x": 5})
+        await tool_set.dispatch(block)
+        assert block.result == "10"
 
         # Redefine: x * 3
         mgr.patch_module("test_late.tools", (
@@ -638,10 +660,9 @@ class TestToolSetLateBind:
             "        return str(x * 3)\n"
         ))
         # Second call should use new code (via late binding)
-        result = await tool_set.dispatch(
-            ToolCall(id="tc_2", name="MyTools-compute", arguments={"x": 5})
-        )
-        assert result.content == "15"
+        block2 = ToolUseBlock(id="tc_2", name="MyTools-compute", input={"x": 5})
+        await tool_set.dispatch(block2)
+        assert block2.result == "15"
 
     def test_add_method_discovered_after_redefine(self, tool_set, mgr):
         """Adding a new method to an existing Toolkit is reflected."""
@@ -708,7 +729,7 @@ class TestToolSetLateBind:
         assert "Shrinking-remove_me" not in names
 
     async def test_full_iteration_cycle(self, tool_set, mgr):
-        """Full cycle: define → discover → call → redefine → call → verify."""
+        """Full cycle: define -> discover -> call -> redefine -> call -> verify."""
         # Step 1: Define
         mgr.patch_module("test_late.cycle", (
             "import mutagent\n"
@@ -720,10 +741,9 @@ class TestToolSetLateBind:
         ))
 
         # Step 2: Discover + call
-        result = await tool_set.dispatch(
-            ToolCall(id="tc_1", name="CycleTool-process", arguments={"data": "hello"})
-        )
-        assert result.content == "HELLO"
+        block = ToolUseBlock(id="tc_1", name="CycleTool-process", input={"data": "hello"})
+        await tool_set.dispatch(block)
+        assert block.result == "HELLO"
 
         # Step 3: Redefine (bug fix: should reverse instead)
         mgr.patch_module("test_late.cycle", (
@@ -735,11 +755,10 @@ class TestToolSetLateBind:
             "        return data[::-1]\n"
         ))
 
-        # Step 4: Call again — should use new code
-        result = await tool_set.dispatch(
-            ToolCall(id="tc_2", name="CycleTool-process", arguments={"data": "hello"})
-        )
-        assert result.content == "olleh"
+        # Step 4: Call again -- should use new code
+        block2 = ToolUseBlock(id="tc_2", name="CycleTool-process", input={"data": "hello"})
+        await tool_set.dispatch(block2)
+        assert block2.result == "olleh"
 
 
 # ---------------------------------------------------------------------------
@@ -786,11 +805,11 @@ class TestToolNamingConvention:
 
         ts = ToolSet()
         ts.add(WebToolkit())
-        result = await ts.dispatch(
-            ToolCall(id="tc_1", name="Web-search", arguments={"query": "python"})
-        )
-        assert not result.is_error
-        assert "found: python" in result.content
+        block = ToolUseBlock(id="tc_1", name="Web-search", input={"query": "python"})
+        await ts.dispatch(block)
+        assert not block.is_error
+        assert block.status == "done"
+        assert "found: python" in block.result
 
     async def test_bare_method_name_dispatch_fails(self):
         """使用不带前缀的方法名 dispatch 会失败。"""
@@ -801,11 +820,10 @@ class TestToolNamingConvention:
 
         ts = ToolSet()
         ts.add(WebToolkit())
-        result = await ts.dispatch(
-            ToolCall(id="tc_1", name="search", arguments={"query": "test"})
-        )
-        assert result.is_error
-        assert "Unknown tool" in result.content
+        block = ToolUseBlock(id="tc_1", name="search", input={"query": "test"})
+        await ts.dispatch(block)
+        assert block.is_error
+        assert "Unknown tool" in block.result
 
     def test_query_uses_prefixed_name(self):
         """query() 使用前缀工具名。"""
@@ -922,11 +940,11 @@ class TestToolNamingAutoDiscover:
         names = {s.name for s in schemas}
         assert "WebDiscover-web_search" in names
 
-        result = await tool_set.dispatch(
-            ToolCall(id="tc_1", name="WebDiscover-web_search", arguments={"query": "test"})
-        )
-        assert not result.is_error
-        assert "found: test" in result.content
+        block = ToolUseBlock(id="tc_1", name="WebDiscover-web_search", input={"query": "test"})
+        await tool_set.dispatch(block)
+        assert not block.is_error
+        assert block.status == "done"
+        assert "found: test" in block.result
 
     def test_auto_discover_prefixed_no_conflict(self, tool_set, mgr):
         """不同前缀的同名方法不冲突。"""
@@ -941,7 +959,7 @@ class TestToolNamingAutoDiscover:
         ))
         schemas = tool_set.get_tools()
         names = {s.name for s in schemas}
-        # Module-inspect (pre-registered) 和 Inspect-inspect_module 共存
+        # Module-inspect (pre-registered) and Inspect-inspect_module coexist
         assert "Module-inspect" in names
         assert "Inspect-inspect_module" in names
 
@@ -956,10 +974,9 @@ class TestToolNamingAutoDiscover:
             "        '''Compute.'''\n"
             "        return str(x * 2)\n"
         ))
-        result = await tool_set.dispatch(
-            ToolCall(id="tc_1", name="Calc-compute", arguments={"x": 5})
-        )
-        assert result.content == "10"
+        block = ToolUseBlock(id="tc_1", name="Calc-compute", input={"x": 5})
+        await tool_set.dispatch(block)
+        assert block.result == "10"
 
         mgr.patch_module("test_naming.late", (
             "import mutagent\n"
@@ -970,7 +987,6 @@ class TestToolNamingAutoDiscover:
             "        '''Compute.'''\n"
             "        return str(x * 3)\n"
         ))
-        result = await tool_set.dispatch(
-            ToolCall(id="tc_2", name="Calc-compute", arguments={"x": 5})
-        )
-        assert result.content == "15"
+        block2 = ToolUseBlock(id="tc_2", name="Calc-compute", input={"x": 5})
+        await tool_set.dispatch(block2)
+        assert block2.result == "15"
