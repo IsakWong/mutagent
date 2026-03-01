@@ -9,7 +9,7 @@ import mutagent
 if TYPE_CHECKING:
     from mutagent.client import LLMClient
     from mutagent.context import AgentContext
-    from mutagent.messages import InputEvent, StreamEvent, ToolUseBlock
+    from mutagent.messages import Message, StreamEvent, ToolUseBlock
     from mutagent.tools import ToolSet
 
 
@@ -32,14 +32,15 @@ class Agent(mutagent.Declaration):
 
     async def run(
         self,
-        input_stream: AsyncIterator[InputEvent],
+        input_stream: AsyncIterator[Message],
         stream: bool = True,
         check_pending: Callable[[], bool] | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        """Run the agent conversation loop, consuming input events and yielding output events.
+        """Run the agent conversation loop, consuming input messages and yielding output events.
 
         Args:
-            input_stream: AsyncIterator of user input events.
+            input_stream: AsyncIterator of user input Messages. Messages containing
+                a TurnStartBlock trigger agent processing; others are stored only.
             stream: Whether to use SSE streaming for the HTTP request.
             check_pending: Optional callback that returns True if new input
                 is available.

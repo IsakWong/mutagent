@@ -6,7 +6,7 @@ import re
 import sys
 
 import mutagent
-from mutagent.messages import Content, InputEvent
+from mutagent.messages import Content, Message, TextBlock, TurnStartBlock
 from mutagent.runtime.ansi import (
     bold_cyan, bold_red, dim, green, highlight_markdown_line,
 )
@@ -228,22 +228,21 @@ def confirm_exit(self) -> bool:
 
 @mutagent.impl(UserIO.input_stream)
 def input_stream(self):
-    """Basic terminal: generator yielding InputEvents from stdin."""
+    """Basic terminal: generator yielding Messages from stdin."""
+    from uuid import uuid4
     while True:
         try:
             while True:
                 user_input = self.read_input()
                 if user_input:
                     break
-            # Collect pending interactions
-            data = {}
-            pending = getattr(self, '_pending_interactions', None)
-            if pending:
-                for i, interaction in enumerate(pending):
-                    interaction['id'] = i
-                data['interactions'] = list(pending)
-                pending.clear()
-            yield InputEvent(type="user_message", text=user_input, data=data)
+            yield Message(
+                role="user",
+                blocks=[
+                    TurnStartBlock(turn_id=uuid4().hex[:12]),
+                    TextBlock(text=user_input),
+                ],
+            )
         except KeyboardInterrupt:
             if self.confirm_exit():
                 print("Bye.")

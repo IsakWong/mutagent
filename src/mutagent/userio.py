@@ -117,10 +117,10 @@ class UserIO(mutagent.Declaration):
         return userio_impl.confirm_exit(self)
 
     def input_stream(self):
-        """Generator that yields InputEvent objects from user input.
+        """Generator that yields Message objects from user input.
 
         Yields:
-            InputEvent instances for each user message.
+            Message instances for each user message (with TurnStartBlock).
         """
         return userio_impl.input_stream(self)
 

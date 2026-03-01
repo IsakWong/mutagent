@@ -79,6 +79,23 @@ class ToolUseBlock(ContentBlock):
     duration: float = 0         # 执行耗时（秒，0 = 未执行）
 
 
+@dataclass
+class TurnStartBlock(ContentBlock):
+    """Turn 开始标记。输入 Message 含此 block 时触发 agent 处理。"""
+
+    type: str = "turn_start"
+    turn_id: str = ""
+
+
+@dataclass
+class TurnEndBlock(ContentBlock):
+    """Turn 结束标记。agent 在最后一条 assistant Message 末尾追加。"""
+
+    type: str = "turn_end"
+    turn_id: str = ""
+    duration: float = 0         # 整轮耗时（秒）
+
+
 # ---------------------------------------------------------------------------
 # Message
 # ---------------------------------------------------------------------------
@@ -112,7 +129,7 @@ class Message:
 
 
 # ---------------------------------------------------------------------------
-# ToolSchema / Response / InputEvent / StreamEvent / Content（保留或适配）
+# ToolSchema / Response / StreamEvent / Content
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -134,19 +151,11 @@ class Response:
 
 
 @dataclass
-class InputEvent:
-    """A single event in a streaming input."""
-
-    type: str
-    text: str = ""
-    data: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
 class StreamEvent:
     """A single event in a streaming LLM response.
 
     Event types:
+        "response_start"  - LLM 调用开始，携带预生成的 Message 元数据(id/model/timestamp)
         "text_delta"      - 增量文本
         "tool_use_start"  - LLM 开始构造工具调用
         "tool_use_delta"  - 增量 JSON（工具参数）
@@ -163,6 +172,7 @@ class StreamEvent:
     tool_call: Optional[ToolUseBlock] = None
     tool_json_delta: str = ""
     response: Optional[Response] = None
+    turn_id: str = ""
     error: str = ""
 
 

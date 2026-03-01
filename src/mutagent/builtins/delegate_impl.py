@@ -1,10 +1,11 @@
 """mutagent.builtins.delegate -- AgentToolkit.delegate implementation."""
 
 import logging
+from uuid import uuid4
 
 import mutagent
 from mutagent.toolkits.agent_toolkit import AgentToolkit
-from mutagent.messages import InputEvent, StreamEvent
+from mutagent.messages import Message, TextBlock, TurnStartBlock
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,10 @@ async def delegate(self: AgentToolkit, agent_name: str, task: str) -> str:
 
     # Build async input stream with the task
     async def input_stream():
-        yield InputEvent(type="user_message", text=task)
+        yield Message(
+            role="user",
+            blocks=[TurnStartBlock(turn_id=uuid4().hex[:12]), TextBlock(text=task)],
+        )
 
     # Run sub-agent and collect result
     text_parts = []

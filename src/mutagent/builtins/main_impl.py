@@ -343,7 +343,9 @@ def run(self) -> None:
     import asyncio
     import queue
     import threading
-    from mutagent.messages import InputEvent, StreamEvent, Message, TextBlock
+    from mutagent.messages import StreamEvent, Message, TextBlock
+    from mutagent.messages import TurnStartBlock
+    from uuid import uuid4
 
     # 启动 asyncio event loop 线程
     loop = asyncio.new_event_loop()
@@ -370,7 +372,10 @@ def run(self) -> None:
 
             # 构造 async input source（单条消息）
             async def single_input(text=user_input):
-                yield InputEvent(type="user_message", text=text)
+                yield Message(
+                    role="user",
+                    blocks=[TurnStartBlock(turn_id=uuid4().hex[:12]), TextBlock(text=text)],
+                )
 
             # 提交 agent 任务到 asyncio 线程
             async def run_agent(input_gen=single_input()):

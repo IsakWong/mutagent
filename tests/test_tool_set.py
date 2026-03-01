@@ -10,13 +10,13 @@ from mutagent.client import LLMClient
 from mutagent.builtins.anthropic_provider import AnthropicProvider
 from mutagent.toolkits.module_toolkit import ModuleToolkit
 from mutagent.messages import (
-    InputEvent,
     Message,
     Response,
     StreamEvent,
     TextBlock,
     ToolUseBlock,
     ToolSchema,
+    TurnStartBlock,
 )
 from mutagent.runtime.module_manager import ModuleManager
 from mutagent.tools import ToolEntry, ToolSet
@@ -432,7 +432,11 @@ class TestSystemAgentWithDelegate:
 
         # Run system agent
         async def input_stream():
-            yield InputEvent(type="user_message", text="Do it")
+            from uuid import uuid4
+            yield Message(
+                role="user",
+                blocks=[TurnStartBlock(turn_id=uuid4().hex[:12]), TextBlock(text="Do it")],
+            )
 
         events = []
         async for e in system_agent.run(input_stream()):

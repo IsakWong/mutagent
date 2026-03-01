@@ -12,13 +12,13 @@ from mutagent.builtins.anthropic_provider import AnthropicProvider
 from mutagent.toolkits.module_toolkit import ModuleToolkit
 from mutagent.toolkits.log_toolkit import LogToolkit
 from mutagent.messages import (
-    InputEvent,
     Message,
     Response,
     StreamEvent,
     TextBlock,
     ToolSchema,
     ToolUseBlock,
+    TurnStartBlock,
 )
 from mutagent.runtime.module_manager import ModuleManager
 from mutagent.tools import ToolSet
@@ -42,14 +42,22 @@ def _get_tool_calls(msg: Message) -> list[ToolUseBlock]:
 
 
 async def _single_input(text: str):
-    """Create an async iterator yielding a single user_message InputEvent."""
-    yield InputEvent(type="user_message", text=text)
+    """Create an async iterator yielding a single user Message with TurnStartBlock."""
+    from uuid import uuid4
+    yield Message(
+        role="user",
+        blocks=[TurnStartBlock(turn_id=uuid4().hex[:12]), TextBlock(text=text)],
+    )
 
 
 async def _multi_input(*texts: str):
-    """Create an async iterator yielding multiple user_message InputEvents."""
+    """Create an async iterator yielding multiple user Messages with TurnStartBlock."""
+    from uuid import uuid4
     for text in texts:
-        yield InputEvent(type="user_message", text=text)
+        yield Message(
+            role="user",
+            blocks=[TurnStartBlock(turn_id=uuid4().hex[:12]), TextBlock(text=text)],
+        )
 
 
 async def _collect_events(aiter):
@@ -278,7 +286,7 @@ class TestStreamingEventSequence:
         mgr.cleanup()
 
     async def test_event_order_simple(self, agent):
-        """Simple response yields: text_delta, response_done, turn_done."""
+        """Simple response yields: response_start, text_delta, response_done, turn_done."""
         response = Response(
             message=Message(role="assistant", blocks=[TextBlock(text="Hello")]),
             stop_reason="end_turn",
@@ -293,7 +301,7 @@ class TestStreamingEventSequence:
         events = await _collect_events(agent.run(_single_input("Hi")))
         types = [e.type for e in events]
 
-        assert types == ["text_delta", "response_done", "turn_done"]
+        assert types == ["response_start", "text_delta", "response_done", "turn_done"]
 
     async def test_event_order_with_tool_call(self, agent):
         """Tool call response yields correct event sequence including turn_done."""
@@ -335,21 +343,23 @@ class TestStreamingEventSequence:
         types = [e.type for e in events]
 
         assert types == [
+            "response_start",    # 1st LLM call starts
             "text_delta",        # "Thinking..."
             "tool_use_start",    # LLM constructs tool call
             "tool_use_end",
             "response_done",     # first LLM call done
             "tool_exec_start",   # Agent executes tool
             "tool_exec_end",     # tool result (via tool_call field)
+            "response_start",    # 2nd LLM call starts
             "text_delta",        # "Done"
             "response_done",     # second LLM call done
             "turn_done",         # turn complete
         ]
 
         # Verify tool_exec events carry correct data
-        exec_start = events[4]
+        exec_start = events[5]
         assert exec_start.tool_call.name == "Module-define"
-        exec_end = events[5]
+        exec_end = events[6]
         assert exec_end.tool_call is not None
         assert exec_end.tool_call.id == "tc_1"
         assert exec_end.tool_call.status == "done"
@@ -364,8 +374,8 @@ class TestStreamingEventSequence:
         events = await _collect_events(agent.run(_single_input("Hi")))
         types = [e.type for e in events]
 
-        assert types == ["error", "turn_done"]
-        assert events[0].error == "API failed"
+        assert types == ["response_start", "error", "turn_done"]
+        assert events[1].error == "API failed"
         assert len(agent.context.messages) == 1
         assert agent.context.messages[0].role == "user"
 
@@ -399,7 +409,7 @@ class TestMultiTurnAndErrorRecovery:
         mgr.cleanup()
 
     async def test_multi_turn_single_run(self, agent):
-        """Multiple InputEvents are processed through a single agent.run() call."""
+        """Multiple Messages are processed through a single agent.run() call."""
         response_1 = Response(
             message=Message(role="assistant", blocks=[TextBlock(text="Hi there")]),
             stop_reason="end_turn",
@@ -429,8 +439,8 @@ class TestMultiTurnAndErrorRecovery:
         types = [e.type for e in events]
 
         assert types == [
-            "text_delta", "response_done", "turn_done",
-            "text_delta", "response_done", "turn_done",
+            "response_start", "text_delta", "response_done", "turn_done",
+            "response_start", "text_delta", "response_done", "turn_done",
         ]
 
         assert len(agent.context.messages) == 4
@@ -465,8 +475,8 @@ class TestMultiTurnAndErrorRecovery:
         types = [e.type for e in events]
 
         assert types == [
-            "error", "turn_done",
-            "text_delta", "response_done", "turn_done",
+            "response_start", "error", "turn_done",
+            "response_start", "text_delta", "response_done", "turn_done",
         ]
 
         assert len(agent.context.messages) == 3
@@ -527,7 +537,7 @@ class TestStopReasonToolCallsMismatch:
         events = await _collect_events(agent.run(_single_input("Hi")))
         types = [e.type for e in events]
 
-        assert types == ["text_delta", "response_done", "turn_done"]
+        assert types == ["response_start", "text_delta", "response_done", "turn_done"]
         assert len(agent.context.messages) == 2
 
     async def test_tool_use_with_tool_calls_still_works(self, agent):

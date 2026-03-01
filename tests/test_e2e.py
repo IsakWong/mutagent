@@ -16,7 +16,7 @@ from mutagent.config import Config
 from mutagent.context import AgentContext
 from mutagent.toolkits.module_toolkit import ModuleToolkit
 from mutagent.main import App
-from mutagent.messages import InputEvent, Message, Response, StreamEvent, TextBlock, ToolUseBlock, ToolSchema
+from mutagent.messages import Message, Response, StreamEvent, TextBlock, ToolUseBlock, ToolSchema, TurnStartBlock
 from mutagent.runtime.module_manager import ModuleManager
 from mutagent.tools import ToolSet
 
@@ -59,9 +59,13 @@ def _create_test_agent(
 # Helpers
 # ---------------------------------------------------------------------------
 
-async def _single_input(text: str) -> AsyncIterator[InputEvent]:
-    """Create an async iterator yielding a single user_message InputEvent."""
-    yield InputEvent(type="user_message", text=text)
+async def _single_input(text: str) -> AsyncIterator[Message]:
+    """Create an async iterator yielding a single user Message with TurnStartBlock."""
+    from uuid import uuid4
+    yield Message(
+        role="user",
+        blocks=[TurnStartBlock(turn_id=uuid4().hex[:12]), TextBlock(text=text)],
+    )
 
 
 def _events_for(response: Response) -> list[StreamEvent]:
