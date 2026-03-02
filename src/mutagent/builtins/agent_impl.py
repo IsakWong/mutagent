@@ -173,7 +173,7 @@ async def run(
                         logger.debug("Tool args: %s", args_str)
 
                         block.status = "running"
-                        yield StreamEvent(type="tool_exec_start", tool_call=block)
+                        yield StreamEvent(type="tool_exec_start", tool_call=block, timestamp=time.time())
 
                         t0 = time.monotonic()
                         if capture:
@@ -195,7 +195,7 @@ async def run(
                                     "error" if block.is_error else "ok",
                                     len(block.result))
                         logger.debug("Tool result content: %.200s", block.result)
-                        yield StreamEvent(type="tool_exec_end", tool_call=block)
+                        yield StreamEvent(type="tool_exec_end", tool_call=block, timestamp=time.time())
 
                     # Natural checkpoint: check for pending user input
                     if check_pending and check_pending():

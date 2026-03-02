@@ -174,6 +174,7 @@ class StreamEvent:
     response: Optional[Response] = None
     turn_id: str = ""
     error: str = ""
+    timestamp: float = 0.0
 
 
 @dataclass
