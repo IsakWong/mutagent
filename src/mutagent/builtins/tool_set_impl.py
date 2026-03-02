@@ -219,6 +219,9 @@ def _refresh_discovered(self: ToolSet) -> None:
                              cls.__name__)
                 continue
 
+            # 设置 Toolkit.owner 绑定
+            instance.owner = self
+
             logger.info("Auto-discovered toolkit: %s with tools %s",
                         cls.__name__, [tool_name_map[m] for m in public_methods])
             tk_entries = _make_entries_for_toolkit(cls, instance)
@@ -265,6 +268,11 @@ def add(self: ToolSet, source: Any, methods: list[str] | None = None) -> None:
     # Object instance: register its methods
     cls = type(source)
     cls_dict = cls.__dict__
+
+    # 设置 Toolkit.owner 绑定
+    from mutagent.tools import Toolkit
+    if isinstance(source, Toolkit):
+        source.owner = self
 
     # Track this class as manually added (skip in auto-discovery)
     added_classes = _get_added_classes(self)
@@ -346,6 +354,9 @@ async def dispatch(self: ToolSet, tool_call: ToolUseBlock) -> None:
         tool_call.result = f"Unknown tool: {tool_call.name}"
         tool_call.is_error = True
         return
+
+    # 跟踪当前 tool_call（供 UIToolkit 等使用）
+    object.__setattr__(self, '_current_tool_call', tool_call)
     try:
         fn = entry.callable
         if inspect.iscoroutinefunction(fn):
@@ -358,3 +369,10 @@ async def dispatch(self: ToolSet, tool_call: ToolUseBlock) -> None:
         tool_call.status = "done"
         tool_call.result = f"{type(e).__name__}: {e}"
         tool_call.is_error = True
+    finally:
+        # 通用清理：如果工具执行期间创建了 UIContext，关闭它
+        active_ui = getattr(self, '_active_ui', None)
+        if active_ui:
+            active_ui.close()
+            object.__setattr__(self, '_active_ui', None)
+        object.__setattr__(self, '_current_tool_call', None)

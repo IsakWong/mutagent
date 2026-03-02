@@ -113,6 +113,11 @@ class Toolkit(mutagent.Declaration):
     工具名格式为 ``{Prefix}-{method_name}``，前缀从类名自动生成：
     类名以 ``Toolkit`` 结尾时去掉该后缀，否则使用完整类名。
 
+    Attributes:
+        owner: 拥有此 Toolkit 的 ToolSet 实例。
+            由 ToolSet 在 add() 或 auto-discover 时设置。
+            通过 owner 可访问绑定链：owner.agent → Session。
+
     Example::
 
         class WebToolkit(mutagent.Toolkit):
@@ -120,6 +125,8 @@ class Toolkit(mutagent.Declaration):
                 '''Search the web.'''  # → 工具名 "Web-search"
                 ...
     """
+
+    owner: ToolSet | None = None
 
     def _customize_schema(self, method_name: str, schema: ToolSchema) -> ToolSchema:
         """动态调整工具 schema。子类可覆盖。

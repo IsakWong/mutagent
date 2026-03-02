@@ -994,3 +994,164 @@ class TestToolNamingAutoDiscover:
         block2 = ToolUseBlock(id="tc_2", name="Calc-compute", input={"x": 5})
         await tool_set.dispatch(block2)
         assert block2.result == "15"
+
+
+# ---------------------------------------------------------------------------
+# Toolkit.owner + dispatch state tracking Tests
+# ---------------------------------------------------------------------------
+
+class TestToolkitOwnerBinding:
+    """Toolkit.owner 由 ToolSet 在 add()/discover 时设置。"""
+
+    def test_owner_set_on_add(self):
+        """add() Toolkit 实例后，owner 指向 ToolSet。"""
+        class MyToolkit(mutagent.Toolkit):
+            def do_stuff(self) -> str:
+                """Do stuff."""
+                return "done"
+
+        toolkit = MyToolkit()
+        assert toolkit.owner is None
+
+        ts = ToolSet()
+        ts.add(toolkit)
+        assert toolkit.owner is ts
+
+    def test_owner_set_on_auto_discover(self):
+        """auto-discover 实例化的 Toolkit 也设置 owner。"""
+        mgr = ModuleManager()
+        try:
+            mgr.patch_module("test_owner.auto", (
+                "import mutagent\n"
+                "\n"
+                "class OwnerTest(mutagent.Toolkit):\n"
+                "    def ping(self) -> str:\n"
+                "        '''Ping.'''\n"
+                "        return 'pong'\n"
+            ))
+            ts = ToolSet(auto_discover=True)
+            ts.get_tools()  # 触发 discovery
+
+            # 找到 discovered instance
+            discovered = getattr(ts, '_discovered', {})
+            for state in discovered.values():
+                instance = state['instance']
+                if type(instance).__name__ == 'OwnerTest':
+                    assert instance.owner is ts
+                    break
+            else:
+                pytest.fail("OwnerTest not discovered")
+        finally:
+            mgr.cleanup()
+
+    def test_owner_not_set_for_non_toolkit(self):
+        """add() 普通对象时不设置 owner。"""
+        class NotAToolkit:
+            def greet(self) -> str:
+                """Greet."""
+                return "hi"
+
+        obj = NotAToolkit()
+        ts = ToolSet()
+        ts.add(obj)
+        assert not hasattr(obj, 'owner')
+
+    def test_owner_default_none(self):
+        """Toolkit 默认 owner 为 None。"""
+        class FreshToolkit(mutagent.Toolkit):
+            def noop(self) -> str:
+                """No-op."""
+                return ""
+
+        assert FreshToolkit().owner is None
+
+
+class TestDispatchStateTracking:
+    """dispatch 期间跟踪 _current_tool_call 和清理 _active_ui。"""
+
+    async def test_current_tool_call_during_dispatch(self):
+        """dispatch 执行期间 _current_tool_call 指向当前 ToolUseBlock。"""
+        captured_tool_call = None
+
+        class SpyToolkit(mutagent.Toolkit):
+            def spy(self) -> str:
+                """Capture current tool call."""
+                nonlocal captured_tool_call
+                captured_tool_call = self.owner._current_tool_call
+                return "spied"
+
+        ts = ToolSet()
+        toolkit = SpyToolkit()
+        ts.add(toolkit)
+
+        block = ToolUseBlock(id="tc_spy", name="Spy-spy", input={})
+        await ts.dispatch(block)
+
+        assert captured_tool_call is block
+        # dispatch 完成后应清除
+        assert ts._current_tool_call is None
+
+    async def test_current_tool_call_cleared_on_error(self):
+        """工具抛异常后 _current_tool_call 仍被清除。"""
+        class FailToolkit(mutagent.Toolkit):
+            def fail(self) -> str:
+                """Will fail."""
+                raise RuntimeError("boom")
+
+        ts = ToolSet()
+        ts.add(FailToolkit())
+
+        block = ToolUseBlock(id="tc_fail", name="Fail-fail", input={})
+        await ts.dispatch(block)
+
+        assert block.is_error
+        assert ts._current_tool_call is None
+
+    async def test_active_ui_cleanup_on_dispatch_end(self):
+        """dispatch 结束后清理 _active_ui。"""
+        class MockUI:
+            closed = False
+            def close(self):
+                self.closed = True
+
+        class UIToolkit(mutagent.Toolkit):
+            def with_ui(self) -> str:
+                """Tool that creates UI."""
+                # 模拟 UIToolkit lazy 创建 UIContext
+                object.__setattr__(self.owner, '_active_ui', MockUI())
+                return "done"
+
+        ts = ToolSet()
+        ts.add(UIToolkit())
+
+        block = ToolUseBlock(id="tc_ui", name="UI-with_ui", input={})
+        await ts.dispatch(block)
+
+        assert not block.is_error
+        # _active_ui 应被清理
+        assert getattr(ts, '_active_ui', None) is None
+
+    async def test_active_ui_cleanup_on_error(self):
+        """工具抛异常后 _active_ui 仍被清理。"""
+        class MockUI:
+            closed = False
+            def close(self):
+                self.closed = True
+
+        mock_ui = MockUI()
+
+        class UIToolkit(mutagent.Toolkit):
+            def fail_with_ui(self) -> str:
+                """Tool that creates UI then fails."""
+                object.__setattr__(self.owner, '_active_ui', mock_ui)
+                raise RuntimeError("boom")
+
+        ts = ToolSet()
+        ts.add(UIToolkit())
+
+        block = ToolUseBlock(id="tc_fail_ui", name="UI-fail_with_ui", input={})
+        await ts.dispatch(block)
+
+        assert block.is_error
+        assert mock_ui.closed
+        assert getattr(ts, '_active_ui', None) is None
