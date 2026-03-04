@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, ClassVar
 
 import mutagent
 
@@ -117,6 +117,11 @@ class Toolkit(mutagent.Declaration):
         owner: 拥有此 Toolkit 的 ToolSet 实例。
             由 ToolSet 在 add() 或 auto-discover 时设置。
             通过 owner 可访问绑定链：owner.agent → Session。
+        _discoverable: 控制是否被 auto-discover 发现。
+            设为 False 则 auto-discover 跳过此类，但仍可通过 .add() 手动注册。
+            子类不设置则继承默认值 True。
+        _tool_methods: 方法级白名单。
+            设置后只暴露列表中的方法为工具。未设置则暴露所有公开方法（向后兼容）。
 
     Example::
 
@@ -127,6 +132,8 @@ class Toolkit(mutagent.Declaration):
     """
 
     owner: ToolSet | None = None
+    _discoverable: ClassVar[bool] = True
+    _tool_methods: ClassVar[list[str] | None] = None
 
     def _customize_schema(self, method_name: str, schema: ToolSchema) -> ToolSchema:
         """动态调整工具 schema。子类可覆盖。

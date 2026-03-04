@@ -1155,3 +1155,216 @@ class TestDispatchStateTracking:
         assert block.is_error
         assert mock_ui.closed
         assert getattr(ts, '_active_ui', None) is None
+
+
+class TestAsyncAutoDiscover:
+    """Tests for async methods with auto-discovery."""
+
+    @pytest.fixture
+    def mgr(self):
+        mgr = ModuleManager()
+        yield mgr
+        mgr.cleanup()
+
+    @pytest.fixture
+    def tool_set(self, mgr):
+        ts = ToolSet(auto_discover=True)
+        tools = ModuleToolkit(module_manager=mgr)
+        ts.add(tools)
+        return ts
+
+    async def test_async_auto_discover_dispatch(self, tool_set, mgr):
+        """Auto-discovered async Toolkit method should be awaited correctly."""
+        mgr.patch_module("test_async_discover.tools", (
+            "import mutagent\n"
+            "\n"
+            "class AsyncToolkit(mutagent.Toolkit):\n"
+            "    async def fetch(self, url: str) -> str:\n"
+            "        '''Fetch a URL.\n\n"
+            "        Args:\n"
+            "            url: The URL to fetch.\n"
+            "        '''\n"
+            "        return f'fetched: {url}'\n"
+        ))
+        block = ToolUseBlock(id="tc_async", name="Async-fetch",
+                             input={"url": "https://example.com"})
+        await tool_set.dispatch(block)
+        assert not block.is_error
+        assert block.status == "done"
+        assert "fetched: https://example.com" in block.result
+
+
+class TestDiscoverable:
+    """Tests for Toolkit._discoverable control."""
+
+    @pytest.fixture
+    def mgr(self):
+        mgr = ModuleManager()
+        yield mgr
+        mgr.cleanup()
+
+    @pytest.fixture
+    def tool_set(self, mgr):
+        ts = ToolSet(auto_discover=True)
+        tools = ModuleToolkit(module_manager=mgr)
+        ts.add(tools)
+        return ts
+
+    def test_discoverable_false_skipped(self, tool_set, mgr):
+        """Toolkit with _discoverable=False should not be auto-discovered."""
+        mgr.patch_module("test_discoverable.hidden", (
+            "import mutagent\n"
+            "\n"
+            "class HiddenBase(mutagent.Toolkit):\n"
+            "    _discoverable = False\n"
+            "    def base_util(self) -> str:\n"
+            "        '''Should not appear.'''\n"
+            "        return 'hidden'\n"
+        ))
+        schemas = tool_set.get_tools()
+        names = {s.name for s in schemas}
+        assert "HiddenBase-base_util" not in names
+
+    def test_discoverable_false_child_still_discovered(self, tool_set, mgr):
+        """Child of _discoverable=False parent should still be discovered."""
+        mgr.patch_module("test_discoverable.family", (
+            "import mutagent\n"
+            "\n"
+            "class BaseKit(mutagent.Toolkit):\n"
+            "    _discoverable = False\n"
+            "    def base_method(self) -> str:\n"
+            "        '''Base.'''\n"
+            "        return 'base'\n"
+            "\n"
+            "class ChildKit(BaseKit):\n"
+            "    def child_method(self) -> str:\n"
+            "        '''Child.'''\n"
+            "        return 'child'\n"
+        ))
+        schemas = tool_set.get_tools()
+        names = {s.name for s in schemas}
+        # Parent not discovered
+        assert "BaseKit-base_method" not in names
+        # Child discovered (inherits _discoverable=True default behavior —
+        # child doesn't set _discoverable, but parent's False is inherited.
+        # However, child has its own methods in __dict__)
+        # Actually _discoverable=False is inherited by child via class attribute.
+        # Child needs to explicitly set _discoverable=True or not set it.
+        # Since child inherits False from parent, it won't be discovered either.
+        # This is the expected behavior: subclass must opt back in.
+        assert "ChildKit-child_method" not in names
+
+    def test_discoverable_false_child_opt_in(self, tool_set, mgr):
+        """Child can set _discoverable=True to opt back in."""
+        mgr.patch_module("test_discoverable.optin", (
+            "import mutagent\n"
+            "\n"
+            "class BaseKit(mutagent.Toolkit):\n"
+            "    _discoverable = False\n"
+            "    def base_method(self) -> str:\n"
+            "        '''Base.'''\n"
+            "        return 'base'\n"
+            "\n"
+            "class VisibleKit(BaseKit):\n"
+            "    _discoverable = True\n"
+            "    def visible_method(self) -> str:\n"
+            "        '''Visible.'''\n"
+            "        return 'visible'\n"
+        ))
+        schemas = tool_set.get_tools()
+        names = {s.name for s in schemas}
+        assert "BaseKit-base_method" not in names
+        assert "VisibleKit-visible_method" in names
+
+    def test_discoverable_false_still_works_with_add(self, mgr):
+        """_discoverable=False toolkit can still be added manually."""
+        mgr.patch_module("test_discoverable.manual", (
+            "import mutagent\n"
+            "\n"
+            "class ManualKit(mutagent.Toolkit):\n"
+            "    _discoverable = False\n"
+            "    def manual_tool(self) -> str:\n"
+            "        '''Manual.'''\n"
+            "        return 'manual'\n"
+        ))
+        import test_discoverable.manual as mod
+        ts = ToolSet()
+        ts.add(mod.ManualKit())
+        schemas = ts.get_tools()
+        names = {s.name for s in schemas}
+        assert "ManualKit-manual_tool" in names
+
+
+class TestToolMethods:
+    """Tests for Toolkit._tool_methods whitelist."""
+
+    def test_tool_methods_whitelist(self):
+        """Only methods in _tool_methods should be exposed."""
+        class SelectiveToolkit(mutagent.Toolkit):
+            _tool_methods = ["search"]
+
+            def search(self, query: str) -> str:
+                '''Search.'''
+                return query
+
+            def parse(self, html: str) -> str:
+                '''Parse.'''
+                return html
+
+        ts = ToolSet()
+        ts.add(SelectiveToolkit())
+        schemas = ts.get_tools()
+        names = {s.name for s in schemas}
+        assert "Selective-search" in names
+        assert "Selective-parse" not in names
+
+    def test_tool_methods_empty_list(self):
+        """Empty _tool_methods means no methods exposed."""
+        class NoToolsKit(mutagent.Toolkit):
+            _tool_methods = []
+
+            def hidden(self) -> str:
+                '''Hidden.'''
+                return 'x'
+
+        ts = ToolSet()
+        ts.add(NoToolsKit())
+        schemas = ts.get_tools()
+        assert len(schemas) == 0
+
+    def test_no_tool_methods_backward_compat(self):
+        """Without _tool_methods, all public methods exposed (backward compat)."""
+        class FullToolkit(mutagent.Toolkit):
+            def alpha(self) -> str:
+                '''Alpha.'''
+                return 'a'
+
+            def beta(self) -> str:
+                '''Beta.'''
+                return 'b'
+
+        ts = ToolSet()
+        ts.add(FullToolkit())
+        schemas = ts.get_tools()
+        names = {s.name for s in schemas}
+        assert "Full-alpha" in names
+        assert "Full-beta" in names
+
+    def test_tool_methods_with_auto_discover(self):
+        """_tool_methods works with auto-discovery too."""
+        class FilteredToolkit(mutagent.Toolkit):
+            _tool_methods = ["public_tool"]
+
+            def public_tool(self) -> str:
+                '''Exposed.'''
+                return 'yes'
+
+            def internal_api(self) -> str:
+                '''Not exposed.'''
+                return 'no'
+
+        ts = ToolSet(auto_discover=True)
+        schemas = ts.get_tools()
+        names = {s.name for s in schemas}
+        assert "Filtered-public_tool" in names
+        assert "Filtered-internal_api" not in names

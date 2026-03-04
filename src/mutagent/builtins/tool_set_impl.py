@@ -61,12 +61,19 @@ def _make_late_bound(instance: Any, method_name: str):
 
     This ensures that when the class is updated via define_module, the
     next call uses the new implementation without re-registration.
+
+    For async methods, an async wrapper is generated so that
+    ``inspect.iscoroutinefunction`` returns True and dispatch awaits correctly.
     """
-    def wrapper(**kwargs):
-        return getattr(instance, method_name)(**kwargs)
+    actual = getattr(instance, method_name)
+    if inspect.iscoroutinefunction(actual):
+        async def wrapper(**kwargs):
+            return await getattr(instance, method_name)(**kwargs)
+    else:
+        def wrapper(**kwargs):
+            return getattr(instance, method_name)(**kwargs)
 
     # Copy metadata for schema generation
-    actual = getattr(instance, method_name)
     wrapper.__name__ = method_name
     wrapper.__doc__ = actual.__doc__
     wrapper.__annotations__ = getattr(actual, '__annotations__', {})
@@ -104,7 +111,15 @@ def _discover_toolkit_classes() -> list[type]:
 
 
 def _get_public_methods(cls: type) -> list[str]:
-    """Get public method names defined directly on the class."""
+    """Get public method names defined directly on the class.
+
+    If the class defines ``_tool_methods``, only those methods are returned
+    (whitelist mode). Otherwise, all public (non-underscore) callables in
+    ``cls.__dict__`` are returned (default behavior, backward compatible).
+    """
+    tool_methods = cls.__dict__.get('_tool_methods')
+    if tool_methods is not None:
+        return [m for m in tool_methods if m in cls.__dict__]
     return [
         name for name, val in cls.__dict__.items()
         if not name.startswith("_") and callable(val)
@@ -178,6 +193,10 @@ def _refresh_discovered(self: ToolSet) -> None:
     for cls in current_toolkit_classes:
         # Skip classes that were manually added via add()
         if cls in added_classes:
+            continue
+
+        # Skip classes that opt out of auto-discovery
+        if not getattr(cls, '_discoverable', True):
             continue
 
         module_name = _get_module_name(cls)
@@ -281,11 +300,7 @@ def add(self: ToolSet, source: Any, methods: list[str] | None = None) -> None:
     if methods is not None:
         method_names = methods
     else:
-        # All public methods defined directly on the class
-        method_names = [
-            name for name, val in cls_dict.items()
-            if not name.startswith("_") and callable(val)
-        ]
+        method_names = _get_public_methods(cls)
 
     for method_name in method_names:
         if method_name not in cls_dict:
