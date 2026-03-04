@@ -305,7 +305,7 @@ class TestJinaSearchImpl:
         with patch("httpx.AsyncClient", return_value=mock_client):
             block = ToolUseBlock(id="t1", name="Web-search", input={"query": "test"})
             await tool_set.dispatch(block)
-        assert not block.is_error
+        assert block.is_error is True
         assert "超时" in block.result
 
     async def test_search_request_error(self, tool_set):
@@ -315,7 +315,7 @@ class TestJinaSearchImpl:
         with patch("httpx.AsyncClient", return_value=mock_client):
             block = ToolUseBlock(id="t1", name="Web-search", input={"query": "test"})
             await tool_set.dispatch(block)
-        assert not block.is_error
+        assert block.is_error is True
         assert "搜索失败" in block.result
 
     async def test_search_sends_api_key(self, toolkit_with_key):
@@ -333,21 +333,24 @@ class TestJinaSearchImpl:
     async def test_search_401_friendly_message(self, tool_set):
         resp = MagicMock()
         resp.status_code = 401
+        resp.text = "Unauthorized"
         mock_client = _make_mock_client(resp)
         with patch("httpx.AsyncClient", return_value=mock_client):
             block = ToolUseBlock(id="t1", name="Web-search", input={"query": "test"})
             await tool_set.dispatch(block)
-        assert "被拒绝" in block.result
-        assert "jina_api_key" in block.result
+        assert block.is_error is True
+        assert "401" in block.result
 
     async def test_search_429_friendly_message(self, tool_set):
         resp = MagicMock()
         resp.status_code = 429
+        resp.text = "Too Many Requests"
         mock_client = _make_mock_client(resp)
         with patch("httpx.AsyncClient", return_value=mock_client):
             block = ToolUseBlock(id="t1", name="Web-search", input={"query": "test"})
             await tool_set.dispatch(block)
-        assert "被拒绝" in block.result
+        assert block.is_error is True
+        assert "429" in block.result
 
 
 # ---------------------------------------------------------------------------

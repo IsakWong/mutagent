@@ -66,19 +66,17 @@ async def _jina_search(self: JinaSearchImpl, query: str, max_results: int = 5) -
         async with httpx.AsyncClient() as client:
             resp = await client.get(url, headers=headers, timeout=_TIMEOUT)
             if resp.status_code in (401, 429):
-                return (
-                    "搜索请求被拒绝（可能超出免费额度）。\n\n"
-                    "配置 Jina API key 以获取更高配额：\n"
-                    "1. 访问 https://jina.ai/api-key 获取免费 API key\n"
-                    "2. 在配置文件中添加：\n"
-                    '   {"WebToolkit": {"jina_api_key": "jina_xxxxx"}}'
+                body = resp.text[:500]
+                raise RuntimeError(
+                    f"Jina API HTTP {resp.status_code}。\n"
+                    f"响应：{body}"
                 )
             resp.raise_for_status()
     except httpx.TimeoutException:
-        return f"搜索超时（{_TIMEOUT}s）。请稍后重试。"
+        raise RuntimeError(f"搜索超时（{_TIMEOUT}s）。请稍后重试。")
     except httpx.HTTPError as exc:
         logger.warning("Web search failed: %s", exc)
-        return f"搜索失败：{exc}"
+        raise RuntimeError(f"搜索失败：{exc}") from exc
 
     try:
         data = resp.json()
@@ -136,19 +134,17 @@ async def _jina_fetch(self: JinaFetchImpl, url: str, format: str = "markdown") -
         async with httpx.AsyncClient() as client:
             resp = await client.get(reader_url, headers=headers, timeout=_TIMEOUT)
             if resp.status_code in (401, 429):
-                return (
-                    "获取请求被拒绝（可能超出免费额度）。\n\n"
-                    "配置 Jina API key 以获取更高配额：\n"
-                    "1. 访问 https://jina.ai/api-key 获取免费 API key\n"
-                    "2. 在配置文件中添加：\n"
-                    '   {"WebToolkit": {"jina_api_key": "jina_xxxxx"}}'
+                body = resp.text[:500]
+                raise RuntimeError(
+                    f"Jina API HTTP {resp.status_code}。\n"
+                    f"响应：{body}"
                 )
             resp.raise_for_status()
     except httpx.TimeoutException:
-        return f"读取超时（{_TIMEOUT}s）。请稍后重试。"
+        raise RuntimeError(f"读取超时（{_TIMEOUT}s）。请稍后重试。")
     except httpx.HTTPError as exc:
         logger.warning("Web fetch failed for %s: %s", url, exc)
-        return f"读取失败：{exc}"
+        raise RuntimeError(f"读取失败：{exc}") from exc
 
     try:
         data = resp.json()
