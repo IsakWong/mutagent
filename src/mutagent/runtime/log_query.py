@@ -370,21 +370,55 @@ class LogQueryEngine:
 
     # --- Private helpers ---
 
+    def _resolve_session_file(self, session: str, suffix: str) -> Path | None:
+        """Find a session file by exact or partial session ID match.
+
+        Tries exact match first (``{session}{suffix}``), then falls back to
+        substring match against all files ending with *suffix*.  This allows
+        users to pass a short hex fragment (e.g. ``b007bbe9``) instead of the
+        full ``session-20260305_194024-b007bbe9f853`` prefix.
+
+        Args:
+            session: Session ID (full or partial).  Empty → latest file.
+            suffix: File suffix, e.g. ``".log"`` or ``"-api.jsonl"``.
+        """
+        if not session:
+            return self._find_latest_file(suffix)
+
+        # 1. Exact match
+        exact = self._log_dir / f"{session}{suffix}"
+        if exact.is_file():
+            return exact
+
+        # 2. Substring / prefix match against all candidate files
+        if not self._log_dir.is_dir():
+            return None
+
+        matches: list[Path] = []
+        for p in self._log_dir.iterdir():
+            if not p.name.endswith(suffix):
+                continue
+            # Strip suffix to get the session prefix portion
+            prefix = p.name[: -len(suffix)]
+            if session in prefix:
+                matches.append(p)
+
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            # Multiple matches — pick the latest by filename sort
+            matches.sort(key=lambda p: p.name, reverse=True)
+            return matches[0]
+
+        return None
+
     def _resolve_log_file(self, session: str) -> Path | None:
         """Find the log file for a session."""
-        if session:
-            path = self._log_dir / f"{session}.log"
-            return path if path.is_file() else None
-
-        return self._find_latest_file(".log")
+        return self._resolve_session_file(session, ".log")
 
     def _resolve_api_file(self, session: str) -> Path | None:
         """Find the API file for a session."""
-        if session:
-            path = self._log_dir / f"{session}-api.jsonl"
-            return path if path.is_file() else None
-
-        return self._find_latest_file("-api.jsonl")
+        return self._resolve_session_file(session, "-api.jsonl")
 
     def _find_latest_file(self, suffix: str) -> Path | None:
         """Find the latest file matching suffix by filename sort.
