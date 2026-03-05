@@ -380,6 +380,11 @@ async def dispatch(self: ToolSet, tool_call: ToolUseBlock) -> None:
             result = await asyncio.to_thread(fn, **tool_call.input)
         tool_call.status = "done"
         tool_call.result = str(result)
+    except asyncio.CancelledError:
+        tool_call.status = "done"
+        tool_call.result = "(cancelled)"
+        tool_call.is_error = False
+        raise
     except Exception as e:
         tool_call.status = "done"
         tool_call.result = f"{type(e).__name__}: {e}"
