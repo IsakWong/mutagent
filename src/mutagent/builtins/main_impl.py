@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 import os
+import re
 import sys
+from pathlib import Path
+from typing import Any
 
 import mutagent
-from mutagent.config import Config
+from mutagent.config import Config, ConfigChangeEvent, ChangeCallback, Disposable
 from mutagent.agent import Agent
 from mutagent.toolkits.agent_toolkit import AgentToolkit
 from mutagent.client import LLMClient
@@ -29,10 +33,79 @@ from mutagent.provider import LLMProvider
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# DictConfig — mutagent CLI 的 Config 实现
+# ---------------------------------------------------------------------------
+
+def _expand_env(value: Any) -> Any:
+    """递归展开配置值中的环境变量引用。"""
+    if isinstance(value, str):
+        return re.sub(
+            r'\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)',
+            lambda m: os.environ.get(m.group(1) or m.group(2), m.group(0)),
+            value,
+        )
+    if isinstance(value, dict):
+        return {k: _expand_env(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_expand_env(v) for v in value]
+    return value
+
+
+def _resolve_paths_inplace(data: dict, config_dir: Path) -> None:
+    """将 data 中的相对 path 条目解析为绝对路径。"""
+    raw_paths = data.get("path")
+    if not isinstance(raw_paths, list):
+        return
+    resolved: list[str] = []
+    for p in raw_paths:
+        pp = Path(p)
+        if not pp.is_absolute():
+            pp = (config_dir / pp).resolve()
+        resolved.append(str(pp))
+    data["path"] = resolved
+
+
+class DictConfig(Config):
+    """单 dict 配置。mutagent CLI 用。"""
+
+    _data: dict
+    _listeners: list  # list[tuple[str, ChangeCallback]]
+
+    def get(self, name: str, *, default: Any = None) -> Any:
+        """点分路径导航 _data，递归展开环境变量。"""
+        node = self._data
+        for key in name.split("."):
+            if not isinstance(node, dict) or key not in node:
+                return default
+            node = node[key]
+        return _expand_env(node)
+
+    def set(self, name: str, value: Any, *, source: str = "") -> None:
+        """按点分路径写入 _data，触发匹配的 on_change 回调。"""
+        node = self._data
+        keys = name.split(".")
+        for key in keys[:-1]:
+            node = node.setdefault(key, {})
+        node[keys[-1]] = value
+        event = ConfigChangeEvent(key=name, source=source, config=self)
+        for pattern, cb in self._listeners:
+            if self.affects(pattern, name):
+                cb(event)
+
+    def on_change(self, pattern: str, callback: ChangeCallback) -> Disposable:
+        """注册监听。返回 Disposable 用于取消。"""
+        entry = (pattern, callback)
+        self._listeners.append(entry)
+        def dispose() -> None:
+            self._listeners.remove(entry)
+        return Disposable(dispose=dispose)
+
+
 def _create_llm_client(
-    model_config: dict, api_recorder: ApiRecorder | None = None
+    spec: dict, api_recorder: ApiRecorder | None = None
 ) -> LLMClient:
-    """从模型配置创建 LLMClient。
+    """从模型 spec 创建 LLMClient。
 
     使用 resolve_class 按 provider 配置自动加载 LLMProvider 子类，
     缺省 provider 为 AnthropicProvider（向后兼容）。
@@ -43,13 +116,13 @@ def _create_llm_client(
     import mutagent.builtins.anthropic_provider  # noqa: F401
     import mutagent.builtins.openai_provider  # noqa: F401
 
-    provider_path = model_config.get("provider", "AnthropicProvider")
+    provider_path = spec.get("provider", "AnthropicProvider")
     provider_cls = mutobj.resolve_class(provider_path, base_cls=LLMProvider)
-    provider = provider_cls.from_config(model_config)
+    provider = provider_cls.from_spec(spec)
 
     return LLMClient(
         provider=provider,
-        model=model_config.get("model_id", ""),
+        model=spec.get("model_id", ""),
         api_recorder=api_recorder,
     )
 
@@ -161,16 +234,25 @@ guides, or text content. If the user needs documentation, describe it in your re
 """
 
 @mutagent.impl(App.load_config)
-def load_config(self, config_path) -> None:
-    self.config = Config.load(config_path)
+def load_config(self, config_path: str = ".mutagent/config.json") -> None:
+    p = Path(config_path).expanduser()
+    if not p.is_absolute():
+        p = (Path.cwd() / p).resolve()
+    if p.exists():
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        _resolve_paths_inplace(data, p.parent)
+    else:
+        data = {}
+    self.config = DictConfig(_data=data, _listeners=[])
 
-    # Set environment variables from config (later layers override earlier ones)
-    for key, value in self.config.get("env", {}).items():
+    # Set environment variables from config
+    for key, value in self.config.get("env", default={}).items():
         os.environ[key] = value
 
     # Auto-register .mutagent/ directories to sys.path
-    # User-level first (lower priority), then project-level (higher priority)
-    from pathlib import Path
     for mutagent_dir in [
         str(Path.home() / ".mutagent"),
         str(Path.cwd() / ".mutagent"),
@@ -178,13 +260,13 @@ def load_config(self, config_path) -> None:
         if mutagent_dir not in sys.path:
             sys.path.insert(0, mutagent_dir)
 
-    # Extend sys.path from config (paths already resolved to absolute in Config.load)
-    for p in self.config.get("path", []):
-        if p not in sys.path:
-            sys.path.insert(0, p)
+    # Extend sys.path from config
+    for p_str in self.config.get("path", default=[]):
+        if p_str not in sys.path:
+            sys.path.insert(0, p_str)
 
-    # Load extension modules (may override @impl)
-    for module_name in self.config.get("modules", []):
+    # Load extension modules
+    for module_name in self.config.get("modules", default=[]):
         importlib.import_module(module_name)
 
 
@@ -193,7 +275,13 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
     from pathlib import Path
     from datetime import datetime
 
-    model = self.config.get_model()
+    spec = LLMProvider.resolve_model(self.config)
+    if spec is None:
+        raise SystemExit(
+            "Error: no models configured.\n"
+            "Run the setup wizard or add a 'providers' section to your config."
+        )
+    model = spec
 
     # --- UserIO setup ---
     import mutagent.builtins.block_handlers  # noqa: F401  -- register BlockHandler subclasses
@@ -202,7 +290,7 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
 
     # --- Logging setup ---
     session_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_dir = Path(self.config.get("logging.log_dir", ".mutagent/logs"))
+    log_dir = Path(self.config.get("logging.log_dir", default=".mutagent/logs"))
 
     # 1. Create LogStore (in-memory, no capacity limit)
     log_store = LogStore()
@@ -217,7 +305,7 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
     root_logger.addHandler(mem_handler)
 
     # 3. File handler (default on)
-    if self.config.get("logging.file_log", True):
+    if self.config.get("logging.file_log", default=True):
         log_dir.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(
             log_dir / f"{session_ts}.log", encoding="utf-8"
@@ -239,9 +327,9 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
 
     # --- API Recorder ---
     api_recorder = None
-    if self.config.get("logging.api_record", True):
+    if self.config.get("logging.api_record", default=True):
         log_dir.mkdir(parents=True, exist_ok=True)
-        api_mode = self.config.get("logging.api_record_mode", "incremental")
+        api_mode = self.config.get("logging.api_record_mode", default="incremental")
         api_recorder = ApiRecorder(log_dir, mode=api_mode, session_ts=session_ts)
         logger.info("API recorder started (mode=%s)", api_mode)
 
@@ -259,7 +347,7 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
     client = _create_llm_client(model, api_recorder)
 
     # --- Sub-Agents & AgentToolkit ---
-    agents_config = self.config.get("agents", {})
+    agents_config = self.config.get("agents", default={})
     if agents_config:
         sub_agents = {}
         for agent_name, agent_conf in agents_config.items():
@@ -278,8 +366,12 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
             # Use specified model or share the main client
             sub_model_name = agent_conf.get("model")
             if sub_model_name:
-                sub_model = self.config.get_model(sub_model_name)
-                sub_client = _create_llm_client(sub_model, api_recorder)
+                sub_spec = LLMProvider.resolve_model(self.config, sub_model_name)
+                if sub_spec is None:
+                    logger.warning("Sub-agent '%s': model '%s' not found, using main client", agent_name, sub_model_name)
+                    sub_client = client
+                else:
+                    sub_client = _create_llm_client(sub_spec, api_recorder)
             else:
                 sub_client = client
 
@@ -292,6 +384,7 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
                 llm=sub_client,
                 tools=sub_tool_set,
                 context=sub_context,
+                config=self.config,
             )
             sub_tool_set.agent = sub_agent
             sub_agents[agent_name] = sub_agent
@@ -328,6 +421,7 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
         llm=client,
         tools=tool_set,
         context=context,
+        config=self.config,
     )
     tool_set.agent = self.agent
     return self.agent
@@ -336,8 +430,8 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
 @mutagent.impl(App.run)
 def run(self) -> None:
     self.setup_agent(system_prompt=SYSTEM_PROMPT)
-    model = self.config.get_model()
-    print(f"mutagent ready  (model: {model.get('model_id', '?')})")
+    spec = LLMProvider.resolve_model(self.config)
+    print(f"mutagent ready  (model: {spec.get('model_id', '?') if spec else '?'})")
     print("Type your message. 'exit' or Ctrl+C to quit.\n")
 
     import asyncio

@@ -36,12 +36,12 @@ class AnthropicProvider(LLMProvider):
     api_key: str
 
     @classmethod
-    def from_config(cls, config: dict) -> "AnthropicProvider":
-        if not config.get("auth_token"):
-            raise ValueError("AnthropicProvider requires 'auth_token' in model config.")
+    def from_spec(cls, spec: dict) -> "AnthropicProvider":
+        if not spec.get("auth_token"):
+            raise ValueError("AnthropicProvider requires 'auth_token' in model spec.")
         return cls(
-            base_url=config.get("base_url", "https://api.anthropic.com"),
-            api_key=config["auth_token"],
+            base_url=spec.get("base_url", "https://api.anthropic.com"),
+            api_key=spec["auth_token"],
         )
 
     async def send(

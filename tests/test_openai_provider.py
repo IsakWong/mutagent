@@ -582,23 +582,23 @@ class TestSendMessageIntegration:
         assert captured_kwargs["prompts"] is None
 
 
-class TestOpenAIProviderFromConfig:
+class TestOpenAIProviderFromSpec:
 
-    def test_from_config_defaults(self):
-        provider = OpenAIProvider.from_config({"auth_token": "sk-test"})
+    def test_from_spec_defaults(self):
+        provider = OpenAIProvider.from_spec({"auth_token": "sk-test"})
         assert provider.base_url == "https://api.openai.com/v1"
         assert provider.api_key == "sk-test"
 
-    def test_from_config_missing_auth_token(self):
+    def test_from_spec_missing_auth_token(self):
         with pytest.raises(ValueError, match="auth_token"):
-            OpenAIProvider.from_config({})
+            OpenAIProvider.from_spec({})
 
-    def test_from_config_custom(self):
+    def test_from_spec_custom(self):
         config = {
             "base_url": "https://api.groq.com/openai/v1",
             "auth_token": "gsk_abc123",
         }
-        provider = OpenAIProvider.from_config(config)
+        provider = OpenAIProvider.from_spec(config)
         assert provider.base_url == "https://api.groq.com/openai/v1"
         assert provider.api_key == "gsk_abc123"
 

@@ -28,15 +28,14 @@ class App(mutagent.Declaration):
     agent: Agent
     userio: UserIO
 
-    def load_config(self, config_path):
+    def load_config(self, config_path: str = ".mutagent/config.json") -> None:
         """Load configuration from the given path and store in ``self.config``.
 
         Override if you want to control config loading (e.g. different path,
-        different format, etc.).  The default implementation uses
-        ``Config.load()`` which scans standard locations.
+        different format, etc.).
 
         Args:
-            config_path: Path to the config file (not used by default).
+            config_path: Path to the config file.
         """
         return main_impl.load_config(self, config_path)
 
@@ -70,13 +69,12 @@ def main() -> None:
     import argparse
     parser = argparse.ArgumentParser(description="mutagent — AI Agent Framework")
     parser.add_argument("-V", "--version", action="version", version=f"mutagent {mutagent.__version__}")
-    parser.parse_args()
+    parser.add_argument("--config", default=".mutagent/config.json",
+                        help="Path to config file (default: .mutagent/config.json)")
+    args = parser.parse_args()
 
     app = App()
-    app.load_config([
-        "~/.mutagent/config.json",
-        ".mutagent/config.json",
-    ])
+    app.load_config(args.config)
     app.run()
 
 

@@ -1,113 +1,149 @@
-"""mutagent.config -- Hierarchical configuration system."""
+"""mutagent.config -- 可观察的配置容器。"""
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Callable
 
 import mutagent
 
 if TYPE_CHECKING:
-    from mutagent.agent import Agent
+    pass
+
+
+@dataclass
+class ConfigChangeEvent:
+    """配置变更事件。"""
+    key: str                    # 被设置的完整路径（如 "providers.anthropic"）
+    source: str                 # 变更来源标识（如 "user", "workspace"）
+    config: Config = field(repr=False)  # 触发变更的 Config 实例
+
+
+ChangeCallback = Callable[[ConfigChangeEvent], None]
+
+
+class Disposable:
+    """取消器。调用 dispose() 取消订阅。"""
+
+    _dispose_fn: Callable[[], None] | None
+
+    def __init__(self, dispose: Callable[[], None] | None = None) -> None:
+        self._dispose_fn = dispose
+
+    def dispose(self) -> None:
+        if self._dispose_fn is not None:
+            self._dispose_fn()
+            self._dispose_fn = None
+
+
+# ---------------------------------------------------------------------------
+# Pattern matching helpers
+# ---------------------------------------------------------------------------
+
+def _glob_match(pattern_parts: list[str], key_parts: list[str]) -> bool:
+    """glob 风格匹配。* 匹配单段，** 匹配任意段。"""
+    return _do_match(pattern_parts, 0, key_parts, 0)
+
+
+def _do_match(pp: list[str], pi: int, kp: list[str], ki: int) -> bool:
+    while pi < len(pp) and ki < len(kp):
+        if pp[pi] == "**":
+            for skip in range(ki, len(kp) + 1):
+                if _do_match(pp, pi + 1, kp, skip):
+                    return True
+            return False
+        if pp[pi] == "*" or pp[pi] == kp[ki]:
+            pi += 1
+            ki += 1
+        else:
+            return False
+    while pi < len(pp) and pp[pi] == "**":
+        pi += 1
+    return pi == len(pp) and ki == len(kp)
 
 
 class Config(mutagent.Declaration):
-    """Extensible configuration object.
+    """可观察的配置容器。
 
-    Preserves per-level raw data and assembles merged results on access.
-    Built-in fields (models, env, etc.) are accessed through dedicated
-    methods; extensions can place arbitrary fields in config.json and
-    read them via ``get()``.  All methods can be overridden via ``@impl``.
-
-    Attributes:
-        _layers: List of ``(config_dir, raw_data)`` tuples, ordered from
-            lowest to highest priority.
+    所有方法提供默认实现，Config 本身即可用的空配置：
+    - get() → 返回 default
+    - set() → 空操作
+    - on_change() → 返回空 Disposable
+    - affects() → glob 双向匹配
     """
 
-    _layers: list  # list[tuple[Path, dict]]
+    def get(self, name: str, *, default: Any = None) -> Any:
+        """读取配置值。name 为点分路径。
 
-    @classmethod
-    def load(cls, config_files: list[str | Path]) -> Config:
-        """从配置文件列表构建 Config 对象。
-
-        文件按列表顺序加载，靠后的优先级更高。
-        不存在的文件自动跳过。
-
-        路径展开规则：
-        - "~" 前缀展开为用户目录（Path.home()）
-        - 相对路径相对于 cwd 展开
-        - 绝对路径不变
-
-        Args:
-            config_files: 配置文件路径列表（低优先级 → 高优先级）。
+        示例：
+            config.get("providers.anthropic.auth_token")
+            config.get("providers")  # 返回整个 providers dict
+            config.get("agents.sub_agent.model", default="claude-sonnet")
         """
-        return config_impl.load(cls, config_files)
+        return default
 
-    def get(self, path: str, default: Any = None, *, merge: bool = True) -> Any:
-        """Get a configuration value by key path.
+    def set(self, name: str, value: Any, *, source: str = "") -> None:
+        """设置配置值并触发变更通知。
 
-        Supports dotted paths (e.g. ``"models.glm.base_url"``).
+        name: 点分路径（如 "providers.anthropic"）
+        value: 新值（任意类型）
+        source: 变更来源标识（如 "user", "workspace", "runtime"）
 
-        Args:
-            path: Dot-separated key path.
-            default: Value to return if the path is not found.
-            merge: If True (default), merge values across layers using
-                type-based inference (dicts merge, lists concatenate,
-                scalars use highest priority).  If False, return the
-                highest-priority layer's value without merging.
-
-        Returns:
-            The resolved configuration value, or *default*.
+        设置一个节点会隐式影响所有子路径。例如：
+        set("providers.anthropic", new_dict) 会触发所有监听
+        providers.anthropic 及其子路径的回调。
         """
-        return config_impl.get(self, path, default=default, merge=merge)
 
-    def get_model(self, name: str | None = None) -> dict:
-        """Get a model configuration dict by name.
+    def on_change(self, pattern: str, callback: ChangeCallback) -> Disposable:
+        """监听配置变更。
 
-        Args:
-            name: Model name (a key in the ``models`` dict).
-                If None, uses the default model.
+        pattern 支持 glob 风格通配符：
+        - 精确路径："providers.anthropic.auth_token"
+        - 单级通配 *："providers.*" — 匹配 providers 的任意直接子项
+        - 递归通配 **："providers.**" — 匹配 providers 下任意深度
+        - 混合："providers.*.models" — 任意 provider 的 models
 
-        Returns:
-            A dict with model configuration fields (e.g. ``provider``,
-            ``model_id``, ``base_url``, ``auth_token``).
-            Field validation is delegated to each Provider's ``from_config()``.
-
-        Raises:
-            SystemExit: If the model is not found.
+        触发规则（pattern 与 set 的 key 双向匹配）：
+        1. key 匹配 pattern → 触发（监听范围内的 key 被设置）
+           on_change("providers.*", cb) + set("providers.anthropic") → ✓
+        2. key 是 pattern 的祖先 → 触发（父节点被替换，子路径隐式变更）
+           on_change("providers.anthropic.auth_token", cb) + set("providers.anthropic") → ✓
+           on_change("providers.**", cb) + set("providers") → ✓
+        3. 不相关 → 不触发
+           on_change("providers.*", cb) + set("agents.xxx") → ✗
+           on_change("providers.*", cb) + set("providers.anthropic.auth_token") → ✗
+           （* 只匹配一级，auth_token 是两级深）
         """
-        return config_impl.get_model(self, name)
+        return Disposable()
 
-    def get_all_models(self) -> list[dict]:
-        """列出所有已配置的模型。
+    def affects(self, pattern: str, key: str) -> bool:
+        """判断 key 的变更是否影响 pattern 指定的路径。
 
-        遍历 ``providers`` 配置，展开每个 provider 的 models 列表。
+        双向匹配：
+        1. key 匹配 pattern → True（标准 glob）
+        2. key 是 pattern 的祖先 → True（父节点被替换，子路径隐式变更）
+        3. 不相关 → False
 
-        Returns:
-            每个模型一个 dict，包含：
-            - ``name``: 模型显示名（list 形式 = model_id，dict 形式 = alias key）
-            - ``model_id``: 实际发送给 API 的 model_id
-            - ``provider``: provider 类路径
-            - ``provider_name``: provider 配置 key（如 "copilot"、"anthropic"）
+        子类可覆盖以定制匹配策略。
         """
-        return config_impl.get_all_models(self)
+        pattern_parts = pattern.split(".")
+        key_parts = key.split(".")
 
-    def section(self, key: str) -> Config:
-        """Get a sub-configuration view for a top-level key.
+        # 规则 1: key 匹配 pattern
+        if _glob_match(pattern_parts, key_parts):
+            return True
 
-        Returns a new Config whose data is the merged result of the given
-        key, wrapped as a single-layer Config.  Useful for passing a
-        namespaced config section to extension modules.
+        # 规则 2: key 是 pattern 的祖先
+        if len(key_parts) < len(pattern_parts):
+            prefix_match = True
+            for i, kp in enumerate(key_parts):
+                pp = pattern_parts[i]
+                if pp == "**":
+                    break
+                if pp != "*" and pp != kp:
+                    prefix_match = False
+                    break
+            if prefix_match:
+                return True
 
-        Args:
-            key: Top-level configuration key.
-
-        Returns:
-            A new Config scoped to that section.
-        """
-        return config_impl.section(self, key)
-
-
-from mutagent.builtins import config_impl
-mutagent.register_module_impls(config_impl)
+        return False

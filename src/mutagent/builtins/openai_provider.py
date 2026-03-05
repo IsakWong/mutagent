@@ -35,12 +35,12 @@ class OpenAIProvider(LLMProvider):
     api_key: str
 
     @classmethod
-    def from_config(cls, config: dict) -> "OpenAIProvider":
-        if not config.get("auth_token"):
-            raise ValueError("OpenAIProvider requires 'auth_token' in model config.")
+    def from_spec(cls, spec: dict) -> "OpenAIProvider":
+        if not spec.get("auth_token"):
+            raise ValueError("OpenAIProvider requires 'auth_token' in model spec.")
         return cls(
-            base_url=config.get("base_url", "https://api.openai.com/v1"),
-            api_key=config["auth_token"],
+            base_url=spec.get("base_url", "https://api.openai.com/v1"),
+            api_key=spec["auth_token"],
         )
 
     async def send(

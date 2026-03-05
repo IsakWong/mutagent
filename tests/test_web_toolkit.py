@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
 import mutagent
-from mutagent.config import Config
+from mutagent.builtins.main_impl import DictConfig
 from mutagent.messages import ToolUseBlock, ToolSchema
 from mutagent.toolkits.web_toolkit import FetchImpl, SearchImpl, WebToolkit
 from mutagent.tools import ToolSet
@@ -27,14 +26,15 @@ import mutagent.builtins.web_local  # noqa: F401  -- register LocalFetchImpl
 @pytest.fixture
 def config():
     """无 API key 的空配置。"""
-    return Config(_layers=[])
+    return DictConfig(_data={}, _listeners=[])
 
 
 @pytest.fixture
 def config_with_key():
     """包含 Jina API key 的配置。"""
-    return Config(
-        _layers=[(Path(), {"WebToolkit": {"jina_api_key": "test-key-123"}})]
+    return DictConfig(
+        _data={"WebToolkit": {"jina_api_key": "test-key-123"}},
+        _listeners=[],
     )
 
 

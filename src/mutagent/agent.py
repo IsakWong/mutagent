@@ -8,6 +8,7 @@ import mutagent
 
 if TYPE_CHECKING:
     from mutagent.client import LLMClient
+    from mutagent.config import Config
     from mutagent.context import AgentContext
     from mutagent.messages import Message, StreamEvent, ToolUseBlock
     from mutagent.tools import ToolSet
@@ -24,11 +25,13 @@ class Agent(mutagent.Declaration):
         llm: The LLM client for sending messages.
         tools: The tool set for tool management and dispatch.
         context: Agent context managing prompts, messages, and token tracking.
+        config: The shared configuration instance.
     """
 
     llm: LLMClient
     tools: ToolSet
     context: AgentContext
+    config: Config
 
     async def run(
         self,

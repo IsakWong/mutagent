@@ -12,7 +12,7 @@ import mutagent.builtins  # noqa: F401  -- register all @impl
 
 from mutagent.agent import Agent
 from mutagent.client import LLMClient
-from mutagent.config import Config
+from mutagent.builtins.main_impl import DictConfig
 from mutagent.context import AgentContext
 from mutagent.toolkits.module_toolkit import ModuleToolkit
 from mutagent.main import App
@@ -40,7 +40,7 @@ def _create_test_agent(
     system_prompt: str = "",
 ) -> Agent:
     """Create an Agent for testing via App.setup_agent()."""
-    config = Config(_layers=[(Path(), {
+    config = DictConfig(_data={
         "providers": {"test": {
             "provider": "AnthropicProvider",
             "model_id": model,
@@ -49,7 +49,7 @@ def _create_test_agent(
             "models": [model],
         }},
         "default_model": model,
-    })])
+    }, _listeners=[])
     entry = App(config=config)
     entry.setup_agent(system_prompt=system_prompt)
     return entry.agent
