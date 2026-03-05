@@ -475,7 +475,26 @@ async def _send_stream(
                         elif event_type == "message_delta":
                             delta = data.get("delta", {})
                             stop_reason = delta.get("stop_reason", stop_reason)
-                            usage.update(data.get("usage", {}))
+                            # 合并 usage：取每个字段的最大值。
+                            # message_start 携带 input_tokens 等初始值，
+                            # message_delta 携带最终 output_tokens，
+                            # 但某些代理会在 message_delta 中附带 input_tokens=0，
+                            # 用 max 避免错误覆盖。
+                            for k, v in data.get("usage", {}).items():
+                                if isinstance(v, (int, float)):
+                                    usage[k] = max(usage.get(k, 0), v)
+                                elif isinstance(v, dict):
+                                    # 嵌套 usage（如 cache_creation）
+                                    existing = usage.get(k, {})
+                                    if isinstance(existing, dict):
+                                        for sk, sv in v.items():
+                                            if isinstance(sv, (int, float)):
+                                                existing[sk] = max(existing.get(sk, 0), sv)
+                                        usage[k] = existing
+                                    else:
+                                        usage[k] = v
+                                else:
+                                    usage[k] = v
 
                         elif event_type == "message_stop":
                             message = Message(role="assistant", blocks=blocks)
