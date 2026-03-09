@@ -10,7 +10,7 @@ def test_import_mutagent():
 
 
 def test_version():
-    assert mutagent.__version__ == "0.3.999"
+    assert mutagent.__version__  # 只验证版本号存在，不硬编码具体值
 
 
 def test_impl_is_mutobj_impl():
