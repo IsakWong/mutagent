@@ -73,10 +73,10 @@ async def _jina_search(self: JinaSearchImpl, query: str, max_results: int = 5) -
                 )
             resp.raise_for_status()
     except httpx.TimeoutException:
-        raise RuntimeError(f"搜索超时（{_TIMEOUT}s）。请稍后重试。")
+        raise RuntimeError(f"Search timed out ({_TIMEOUT}s). Please try again later.")
     except httpx.HTTPError as exc:
         logger.warning("Web search failed: %s", exc)
-        raise RuntimeError(f"搜索失败：{exc}") from exc
+        raise RuntimeError(f"Search failed: {exc}") from exc
 
     try:
         data = resp.json()
@@ -141,10 +141,10 @@ async def _jina_fetch(self: JinaFetchImpl, url: str, format: str = "markdown") -
                 )
             resp.raise_for_status()
     except httpx.TimeoutException:
-        raise RuntimeError(f"读取超时（{_TIMEOUT}s）。请稍后重试。")
+        raise RuntimeError(f"Fetch timed out ({_TIMEOUT}s). Please try again later.")
     except httpx.HTTPError as exc:
         logger.warning("Web fetch failed for %s: %s", url, exc)
-        raise RuntimeError(f"读取失败：{exc}") from exc
+        raise RuntimeError(f"Fetch failed: {exc}") from exc
 
     try:
         data = resp.json()
