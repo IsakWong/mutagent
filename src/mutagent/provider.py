@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncGenerator
 
 import mutagent
 
@@ -48,7 +48,7 @@ class LLMProvider(mutagent.Declaration):
         tools: list[ToolSchema],
         prompts: list[Message] | None = None,
         stream: bool = True,
-    ) -> AsyncIterator[StreamEvent]:
+    ) -> AsyncGenerator[StreamEvent, None]:
         """发送请求到 LLM 后端，返回流式事件。
 
         Args:
@@ -61,7 +61,7 @@ class LLMProvider(mutagent.Declaration):
         Yields:
             StreamEvent 实例。最后一个事件始终为 ``response_done``。
         """
-        ...
+        yield  # type: ignore[reportReturnType]
 
 
 # --- 注册默认实现 ---

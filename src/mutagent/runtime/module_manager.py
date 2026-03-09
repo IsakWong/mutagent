@@ -87,7 +87,7 @@ class ModuleManager:
         loader = _VirtualLoader(source, virtual_filename)
         module.__name__ = module_path
         module.__file__ = virtual_filename
-        module.__loader__ = loader
+        module.__loader__ = loader  # type: ignore[reportAttributeAccessIssue]
         module.__package__ = module_path.rpartition(".")[0] or module_path
 
         # Inject into linecache

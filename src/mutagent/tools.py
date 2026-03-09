@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar
 import mutagent
 
 if TYPE_CHECKING:
+    from mutagent.agent import Agent
     from mutagent.messages import ToolSchema, ToolUseBlock
 
 
@@ -48,6 +49,7 @@ class ToolSet(mutagent.Declaration):
     """
 
     auto_discover: bool = False
+    agent: Agent | None = None
 
     def add(self, source: Any, methods: list[str] | None = None) -> None:
         """Add tools from a source.

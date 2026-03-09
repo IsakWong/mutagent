@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, AsyncIterator, Callable
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 
 import mutagent
 
@@ -32,6 +32,7 @@ class Agent(mutagent.Declaration):
     tools: ToolSet
     context: AgentContext
     config: Config
+    session: Any  # 运行时由上层（如 mutbot）注入
 
     async def run(
         self,
@@ -51,11 +52,11 @@ class Agent(mutagent.Declaration):
         Yields:
             StreamEvent instances for each piece of incremental output.
         """
-        return agent_impl.run(self, input_stream, stream=stream, check_pending=check_pending)
+        yield agent_impl.run  # type: ignore[reportReturnType]
 
     async def step(self, stream: bool = True) -> AsyncIterator[StreamEvent]:
         """Execute a single LLM call, yielding streaming events."""
-        return agent_impl.step(self, stream=stream)
+        yield agent_impl.step  # type: ignore[reportReturnType]
 
     async def handle_tool_calls(self, tool_calls: list[ToolUseBlock]) -> None:
         """Execute tool calls, updating each ToolUseBlock in-place.

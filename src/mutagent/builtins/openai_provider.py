@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Any, AsyncIterator
+from typing import Any, AsyncGenerator, AsyncIterator
 
 import httpx
 
@@ -50,7 +50,7 @@ class OpenAIProvider(LLMProvider):
         tools: list[ToolSchema],
         prompts: list[Message] | None = None,
         stream: bool = True,
-    ) -> AsyncIterator[StreamEvent]:
+    ) -> AsyncGenerator[StreamEvent, None]:
         """Send messages to OpenAI-compatible API and yield streaming events."""
         openai_messages = _messages_to_openai(messages)
         if prompts:
@@ -207,7 +207,7 @@ def _response_from_openai(data: dict[str, Any]) -> Response:
     """Convert OpenAI API response to internal Response."""
     choice = data.get("choices", [{}])[0]
     message_data = choice.get("message", {})
-    finish_reason = choice.get("finish_reason", "")
+    finish_reason = choice.get("finish_reason") or ""
 
     stop_reason_map = {
         "stop": "end_turn",

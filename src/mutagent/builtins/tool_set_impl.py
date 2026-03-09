@@ -67,7 +67,7 @@ def _make_late_bound(instance: Any, method_name: str):
     """
     actual = getattr(instance, method_name)
     if inspect.iscoroutinefunction(actual):
-        async def wrapper(**kwargs):
+        async def wrapper(**kwargs):  # type: ignore[reportRedeclaration]
             return await getattr(instance, method_name)(**kwargs)
     else:
         def wrapper(**kwargs):
@@ -313,7 +313,7 @@ def add(self: ToolSet, source: Any, methods: list[str] | None = None) -> None:
         schema = make_schema(decl_method, tool_name)
         # 允许 Toolkit 实例动态调整 schema
         if hasattr(source, '_customize_schema'):
-            schema = source._customize_schema(method_name, schema)
+            schema = source._customize_schema(method_name, schema)  # type: ignore[reportFunctionMemberAccess]
         entries[tool_name] = ToolEntry(
             name=tool_name,
             callable=bound_method,

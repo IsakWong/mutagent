@@ -3,7 +3,7 @@
 import json
 import logging
 import time
-from typing import Any, AsyncIterator
+from typing import Any, AsyncGenerator, AsyncIterator
 
 import httpx
 
@@ -51,7 +51,7 @@ class AnthropicProvider(LLMProvider):
         tools: list[ToolSchema],
         prompts: list[Message] | None = None,
         stream: bool = True,
-    ) -> AsyncIterator[StreamEvent]:
+    ) -> AsyncGenerator[StreamEvent, None]:
         """Send messages to Claude API and yield streaming events."""
         claude_messages = _messages_to_claude(messages)
         payload: dict[str, Any] = {
@@ -363,7 +363,7 @@ async def _send_stream(
             # Accumulate blocks for final Response
             blocks: list[ContentBlock] = []
             stop_reason = ""
-            usage: dict[str, int] = {}
+            usage: dict[str, Any] = {}
 
             current_block_type: str = ""
             current_tool_id: str = ""

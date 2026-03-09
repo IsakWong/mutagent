@@ -334,7 +334,7 @@ def setup_agent(self, system_prompt: str = "") -> Agent:
         logger.info("API recorder started (mode=%s)", api_mode)
 
     # --- Components ---
-    search_dirs = [
+    search_dirs: list[str | Path] = [
         Path.home() / ".mutagent",
         Path.cwd() / ".mutagent",
     ]
@@ -435,6 +435,7 @@ def run(self) -> None:
     print("Type your message. 'exit' or Ctrl+C to quit.\n")
 
     import asyncio
+    import concurrent.futures
     import queue
     import threading
     from mutagent.messages import StreamEvent, Message, TextBlock
@@ -447,7 +448,7 @@ def run(self) -> None:
     loop_thread.start()
 
     event_q: queue.Queue[StreamEvent | None] = queue.Queue()
-    future: asyncio.Future | None = None
+    future: concurrent.futures.Future[None] | None = None
 
     waiting_for_input = True  # True when blocked on read_input()
 

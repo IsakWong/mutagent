@@ -94,7 +94,7 @@ class LLMClient(mutagent.Declaration):
         Yields:
             StreamEvent instances.
         """
-        ...
+        yield client_impl.send_message  # type: ignore[reportReturnType]
 
 
 from .builtins import client_impl
