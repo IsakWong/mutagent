@@ -14,6 +14,7 @@ from markdownify import markdownify as md
 from readability import Document as ReadabilityDoc
 
 import mutagent
+from mutagent.http import HttpClient
 from mutagent.toolkits.web_toolkit import FetchImpl
 
 if TYPE_CHECKING:
@@ -35,7 +36,7 @@ _MAX_CONTENT_CHARS = 50000
 
 async def _httpx_get(url: str) -> str:
     """通过 httpx 获取网页原始 HTML。"""
-    async with httpx.AsyncClient() as client:
+    async with HttpClient.create() as client:
         resp = await client.get(url, timeout=_TIMEOUT, follow_redirects=True)
         resp.raise_for_status()
     return resp.text

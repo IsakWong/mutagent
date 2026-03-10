@@ -8,6 +8,7 @@ import httpx
 import mutobj
 
 import mutagent
+from mutagent.http import HttpClient
 from mutagent.messages import ToolSchema
 from mutagent.toolkits.web_toolkit import FetchImpl, SearchImpl, WebToolkit
 
@@ -37,7 +38,7 @@ def _discover_impls(base_cls: type) -> dict[str, type]:
 async def _httpx_get_raw(url: str) -> str:
     """内置 raw 获取，仅依赖 httpx。"""
     try:
-        async with httpx.AsyncClient() as client:
+        async with HttpClient.create() as client:
             resp = await client.get(url, timeout=_TIMEOUT, follow_redirects=True)
             resp.raise_for_status()
     except httpx.TimeoutException:

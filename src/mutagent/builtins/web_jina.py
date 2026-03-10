@@ -9,6 +9,7 @@ from urllib.parse import quote
 import httpx
 
 import mutagent
+from mutagent.http import HttpClient
 from mutagent.toolkits.web_toolkit import FetchImpl, SearchImpl
 
 if TYPE_CHECKING:
@@ -63,7 +64,7 @@ async def _jina_search(self: JinaSearchImpl, query: str, max_results: int = 5) -
     headers = _get_headers(self.config)
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with HttpClient.create() as client:
             resp = await client.get(url, headers=headers, timeout=_TIMEOUT)
             if resp.status_code in (401, 429):
                 body = resp.text[:500]
@@ -131,7 +132,7 @@ async def _jina_fetch(self: JinaFetchImpl, url: str, format: str = "markdown") -
     headers = _get_headers(self.config)
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with HttpClient.create() as client:
             resp = await client.get(reader_url, headers=headers, timeout=_TIMEOUT)
             if resp.status_code in (401, 429):
                 body = resp.text[:500]

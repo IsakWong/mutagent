@@ -6,6 +6,7 @@ from typing import Any, AsyncGenerator, AsyncIterator
 
 import httpx
 
+from mutagent.http import HttpClient
 from mutagent.messages import (
     ContentBlock,
     ImageBlock,
@@ -259,7 +260,7 @@ async def _send_no_stream(
     headers: dict[str, str],
 ) -> AsyncIterator[StreamEvent]:
     """Non-streaming path for OpenAI API."""
-    async with httpx.AsyncClient(timeout=httpx.Timeout(None, connect=10)) as client:
+    async with HttpClient.create(timeout=httpx.Timeout(None, connect=10)) as client:
         resp = await client.post(
             f"{base_url}/chat/completions",
             headers=headers,
@@ -296,7 +297,7 @@ async def _send_stream(
     payload["stream"] = True
     payload["stream_options"] = {"include_usage": True}
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(None, connect=10)) as client:
+    async with HttpClient.create(timeout=httpx.Timeout(None, connect=10)) as client:
         async with client.stream(
             "POST",
             f"{base_url}/chat/completions",
