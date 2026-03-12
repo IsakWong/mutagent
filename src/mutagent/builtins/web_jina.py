@@ -9,7 +9,7 @@ from urllib.parse import quote
 import httpx
 
 import mutagent
-from mutagent.http import HttpClient
+from mutagent.net.client import HttpClient
 from mutagent.toolkits.web_toolkit import FetchImpl, SearchImpl
 
 if TYPE_CHECKING:

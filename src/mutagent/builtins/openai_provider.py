@@ -6,7 +6,7 @@ from typing import Any, AsyncGenerator, AsyncIterator
 
 import httpx
 
-from mutagent.http import HttpClient
+from mutagent.net.client import HttpClient
 from mutagent.messages import (
     ContentBlock,
     ImageBlock,
