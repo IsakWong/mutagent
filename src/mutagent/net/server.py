@@ -1,264 +1,193 @@
-"""入站服务 — ASGI Server + MCP Server。"""
+"""Web 框架 Declaration — Server / View / Request / Response 等。
+
+所有公开类型均为 mutobj.Declaration，实现在 _server_impl.py 中。
+"""
 
 from __future__ import annotations
 
-import json
-import logging
-import secrets
-from typing import Any
+import socket as _socket
+from typing import Any, AsyncIterator, Sequence
 
-from mutagent.net._asgi import Server, scope_runner
-from mutagent.net._mcp_proto import (
-    JsonRpcDispatcher,
-    JsonRpcError,
-    INVALID_PARAMS,
-    PROTOCOL_VERSION,
-    ServerCapabilities,
-    ToolResult,
-)
-from mutagent.net._protocol import format_sse
-from mutagent.net.mcp import MCPToolProvider
-
-logger = logging.getLogger("mutagent.net.server")
-
-__all__ = ["Server", "MCPServer", "mount_mcp", "scope_runner"]
+import mutobj
 
 
-class MCPServer:
-    """MCP server — 通过 Declaration 自动发现 tool，Streamable HTTP 提供服务。
+# ---------------------------------------------------------------------------
+# Request / Response
+# ---------------------------------------------------------------------------
 
-    用法::
 
-        mcp = MCPServer(name="my-server", version="1.0.0")
-        app = mount_mcp(app, "/mcp", mcp)
+class Request(mutobj.Declaration):
+    """HTTP 请求。"""
+    method: str = "GET"
+    path: str = "/"
+    raw_path: str = "/"
+    headers: dict[str, str] = mutobj.field(default_factory=dict)
+    query_params: dict[str, str] = mutobj.field(default_factory=dict)
+    path_params: dict[str, str] = mutobj.field(default_factory=dict)
 
-    tool 通过继承 MCPToolSet 定义，MCPToolProvider 自动发现::
+    async def body(self) -> bytes:
+        """读取原始请求体。"""
+        ...
 
-        class MyTools(MCPToolSet):
-            async def search(self, query: str) -> str:
-                return "results..."
+    async def json(self) -> Any:
+        """读取请求体并解析为 JSON。"""
+        ...
+
+
+class Response(mutobj.Declaration):
+    """HTTP 响应。"""
+    status: int = 200
+    body: bytes = b""
+    headers: dict[str, str] = mutobj.field(default_factory=dict)
+
+
+class StreamingResponse(mutobj.Declaration):
+    """流式 HTTP 响应。"""
+    status: int = 200
+    headers: dict[str, str] = mutobj.field(default_factory=dict)
+    body_iterator: AsyncIterator[bytes] | None = None
+    media_type: str = "text/event-stream"
+
+
+# ---------------------------------------------------------------------------
+# WebSocket
+# ---------------------------------------------------------------------------
+
+
+class WebSocketDisconnect(Exception):
+    """WebSocket 正常断开异常。"""
+    def __init__(self, code: int = 1000) -> None:
+        self.code = code
+        super().__init__(f"WebSocket disconnected (code={code})")
+
+
+class WebSocketConnection(mutobj.Declaration):
+    """WebSocket 连接。
+
+    在 WebSocketView.connect() 中使用，通过 accept/receive/send/close 管理生命周期。
     """
+    path: str = "/"
+    query_params: dict[str, str] = mutobj.field(default_factory=dict)
+    path_params: dict[str, str] = mutobj.field(default_factory=dict)
 
-    def __init__(
-        self,
-        name: str = "mutagent",
-        version: str = "0.1.0",
-        *,
-        instructions: str | None = None,
-    ) -> None:
-        self.name = name
-        self.version = version
-        self.instructions = instructions
+    async def accept(self) -> None: ...
 
-        self._tool_provider = MCPToolProvider()
-        self._sessions: dict[str, _MCPSession] = {}
+    async def receive(self) -> dict[str, Any]:
+        """接收消息。返回 ``{"type": "websocket.receive", "text": ...}`` 或 ``{"bytes": ...}``。
 
-        self._dispatch = JsonRpcDispatcher()
-        self._setup_handlers()
+        对端关闭时抛出 WebSocketDisconnect。
+        """
+        ...
 
-    def _setup_handlers(self) -> None:
-        """注册 MCP JSON-RPC 方法。"""
-        self._dispatch.add_method("initialize", self._handle_initialize)
-        self._dispatch.add_notification("notifications/initialized", self._handle_initialized)
-        self._dispatch.add_method("ping", self._handle_ping)
-        self._dispatch.add_method("tools/list", self._handle_tools_list)
-        self._dispatch.add_method("tools/call", self._handle_tools_call)
+    async def receive_json(self) -> Any:
+        """接收并解析 JSON 消息。"""
+        ...
 
-    # --- MCP handlers ---
-
-    async def _handle_initialize(self, params: dict[str, Any]) -> dict[str, Any]:
-        tools = self._tool_provider.list_tools()
-        capabilities = ServerCapabilities(
-            tools={"listChanged": False} if tools else None,
-        )
-        return {
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": capabilities.to_dict(),
-            "serverInfo": {
-                "name": self.name,
-                "version": self.version,
-            },
-            **({"instructions": self.instructions} if self.instructions else {}),
-        }
-
-    async def _handle_initialized(self, params: dict[str, Any]) -> None:
-        pass
-
-    async def _handle_ping(self, params: dict[str, Any]) -> dict[str, Any]:
-        return {}
-
-    async def _handle_tools_list(self, params: dict[str, Any]) -> dict[str, Any]:
-        return {"tools": self._tool_provider.list_tools()}
-
-    async def _handle_tools_call(self, params: dict[str, Any]) -> dict[str, Any]:
-        tool_name = params.get("name")
-        if not tool_name:
-            raise JsonRpcError(INVALID_PARAMS, "Missing tool name")
-
-        arguments = params.get("arguments", {})
-        try:
-            result = await self._tool_provider.call_tool(tool_name, arguments)
-        except JsonRpcError:
-            raise
-        except Exception as e:
-            logger.exception("Tool %s raised exception", tool_name)
-            result = ToolResult.error(str(e))
-
-        return result.to_dict()
-
-    # --- ASGI endpoint ---
-
-    async def handle_request(
-        self,
-        scope: dict[str, Any],
-        receive: Any,
-        send: Any,
-    ) -> None:
-        """处理 MCP HTTP 端点请求。"""
-        method = scope.get("method", "GET")
-
-        if method == "POST":
-            await self._handle_post(scope, receive, send)
-        elif method == "GET":
-            await self._handle_get(scope, receive, send)
-        elif method == "DELETE":
-            await self._handle_delete(scope, receive, send)
-        else:
-            await _send_json_response(send, 405, {"error": "Method not allowed"})
-
-    async def _handle_post(self, scope: dict, receive: Any, send: Any) -> None:
-        body = b""
-        while True:
-            msg = await receive()
-            body += msg.get("body", b"")
-            if not msg.get("more_body", False):
-                break
-
-        try:
-            parsed = json.loads(body)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            await _send_json_response(send, 400, {
-                "jsonrpc": "2.0", "id": None,
-                "error": {"code": -32700, "message": "Parse error"},
-            })
-            return
-
-        messages = parsed if isinstance(parsed, list) else [parsed]
-        has_request = any(
-            isinstance(m, dict) and "id" in m and "method" in m
-            for m in messages
-        )
-
-        if not has_request:
-            for msg in messages:
-                if isinstance(msg, dict):
-                    await self._dispatch.handle(msg)
-            await _send_empty_response(send, 202)
-            return
-
-        headers = dict(scope.get("headers", []))
-        accept = headers.get(b"accept", b"").decode()
-
-        if isinstance(parsed, list):
-            responses = []
-            for msg in parsed:
-                if isinstance(msg, dict):
-                    resp = await self._dispatch.handle(msg)
-                    if resp is not None:
-                        responses.append(resp)
-            result_data = responses if len(responses) != 1 else responses[0]
-        else:
-            result_data = await self._dispatch.handle(parsed)
-
-        if result_data is None:
-            await _send_empty_response(send, 202)
-            return
-
-        extra_headers: list[tuple[bytes, bytes]] = []
-        if isinstance(parsed, dict) and parsed.get("method") == "initialize":
-            session_id = secrets.token_hex(16)
-            session = _MCPSession(session_id=session_id)
-            self._sessions[session_id] = session
-            extra_headers.append((b"mcp-session-id", session_id.encode()))
-
-        if "text/event-stream" in accept:
-            await _send_sse_response(send, result_data, extra_headers)
-        else:
-            await _send_json_response(send, 200, result_data, extra_headers)
-
-    async def _handle_get(self, scope: dict, receive: Any, send: Any) -> None:
-        await _send_json_response(send, 405, {"error": "GET not supported"})
-
-    async def _handle_delete(self, scope: dict, receive: Any, send: Any) -> None:
-        headers = dict(scope.get("headers", []))
-        session_id = headers.get(b"mcp-session-id", b"").decode()
-        if session_id and session_id in self._sessions:
-            del self._sessions[session_id]
-            await _send_empty_response(send, 200)
-        else:
-            await _send_empty_response(send, 404)
+    async def send_json(self, data: Any) -> None: ...
+    async def send_bytes(self, data: bytes) -> None: ...
+    async def close(self, code: int = 1000, reason: str = "") -> None: ...
 
 
-class _MCPSession:
-    """MCP session 状态。"""
-    def __init__(self, session_id: str) -> None:
-        self.session_id = session_id
-        self.initialized = False
+# ---------------------------------------------------------------------------
+# Server / View / WebSocketView / StaticView
+# ---------------------------------------------------------------------------
 
 
-def mount_mcp(app: Any, path: str, mcp: MCPServer) -> Any:
-    """将 MCPServer 挂载到 ASGI app 的指定路径。"""
-    path = path.rstrip("/")
+class Server(mutobj.Declaration):
+    """ASGI Server。
 
-    async def mcp_app(scope: dict, receive: Any, send: Any) -> None:
-        if scope["type"] == "http" and scope["path"].rstrip("/") == path:
-            await mcp.handle_request(scope, receive, send)
-        else:
-            await app(scope, receive, send)
+    自动发现 View/WebSocketView/StaticView 子类并路由分发。
+    子类覆盖 on_startup/on_shutdown 实现生命周期管理。
+    """
+    host: str = "127.0.0.1"
+    port: int = 0
 
-    return mcp_app
+    async def route(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        """ASGI 入口 — 自动发现 View/WebSocketView 并路径匹配分发。"""
+        ...
 
+    async def on_startup(self) -> None:
+        """生命周期：启动时调用。子类覆盖以初始化资源。"""
+        ...
 
-# --- 内部辅助 ---
+    async def on_shutdown(self) -> None:
+        """生命周期：关闭时调用。子类覆盖以清理资源。"""
+        ...
 
-async def _send_json_response(
-    send: Any,
-    status: int,
-    data: Any,
-    extra_headers: list[tuple[bytes, bytes]] | None = None,
-) -> None:
-    body = json.dumps(data).encode()
-    headers: list[tuple[bytes, bytes]] = [
-        (b"content-type", b"application/json"),
-        (b"content-length", str(len(body)).encode()),
-    ]
-    if extra_headers:
-        headers.extend(extra_headers)
-    await send({"type": "http.response.start", "status": status, "headers": headers})
-    await send({"type": "http.response.body", "body": body})
+    def run(self, *, listen: Sequence[str | _socket.socket] | None = None) -> None:
+        """阻塞运行。listen 接受 "ip:port" 字符串或预创建 socket 的数组。"""
+        ...
 
+    async def start(self, *, listen: Sequence[str | _socket.socket] | None = None) -> None:
+        """异步启动（在已有 event loop 中使用）。"""
+        ...
 
-async def _send_empty_response(send: Any, status: int) -> None:
-    await send({
-        "type": "http.response.start",
-        "status": status,
-        "headers": [(b"content-length", b"0")],
-    })
-    await send({"type": "http.response.body", "body": b""})
+    async def stop(self) -> None:
+        """异步停止。"""
+        ...
 
 
-async def _send_sse_response(
-    send: Any,
-    data: Any,
-    extra_headers: list[tuple[bytes, bytes]] | None = None,
-) -> None:
-    headers: list[tuple[bytes, bytes]] = [
-        (b"content-type", b"text/event-stream"),
-        (b"cache-control", b"no-cache"),
-    ]
-    if extra_headers:
-        headers.extend(extra_headers)
-    await send({"type": "http.response.start", "status": 200, "headers": headers})
+class View(mutobj.Declaration):
+    """HTTP 路由视图基类。
 
-    sse_data = format_sse(json.dumps(data), event="message")
-    await send({"type": "http.response.body", "body": sse_data, "more_body": False})
+    子类设置 ``path`` 并覆盖对应 HTTP method。path 支持路径参数，如 ``/api/{id}``，
+    匹配值通过 ``request.path_params["id"]`` 获取。Server 自动发现所有 View 子类。
+
+    示例::
+
+        class HelloView(View):
+            path = "/hello/{name}"
+
+            async def get(self, request: Request) -> Response:
+                return json_response({"hello": request.path_params["name"]})
+    """
+    path: str = ""
+
+    async def get(self, request: Request) -> Response | StreamingResponse: ...
+    async def post(self, request: Request) -> Response | StreamingResponse: ...
+    async def put(self, request: Request) -> Response | StreamingResponse: ...
+    async def delete(self, request: Request) -> Response | StreamingResponse: ...
+
+
+class WebSocketView(mutobj.Declaration):
+    """WebSocket 路由视图基类。
+
+    子类设置 ``path`` 并覆盖 ``connect``。path 格式同 View。
+    ``connect`` 返回即断开连接。
+    """
+    path: str = ""
+
+    async def connect(self, ws: WebSocketConnection) -> None:
+        """WebSocket 生命周期入口。方法返回即断开。"""
+        ...
+
+
+class StaticView(View):
+    """静态文件服务。directory 为文件系统绝对路径。"""
+    directory: str = ""
+
+
+# ---------------------------------------------------------------------------
+# 辅助函数（公开 API）
+# ---------------------------------------------------------------------------
+
+
+def json_response(data: Any, status: int = 200) -> Response:
+    """创建 JSON 响应。"""
+    import json as _json
+    body = _json.dumps(data, ensure_ascii=False).encode("utf-8")
+    return Response(
+        status=status,
+        body=body,
+        headers={"content-type": "application/json; charset=utf-8"},
+    )
+
+
+def html_response(html: str, status: int = 200) -> Response:
+    """创建 HTML 响应。"""
+    body = html.encode("utf-8")
+    return Response(
+        status=status,
+        body=body,
+        headers={"content-type": "text/html; charset=utf-8"},
+    )
