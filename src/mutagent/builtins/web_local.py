@@ -62,7 +62,7 @@ def _to_markdown(html: str) -> str:
 def _format_result(title: str, content: str, url: str) -> str:
     """格式化输出结果，添加标题和截断。"""
     if len(content) > _MAX_CONTENT_CHARS:
-        content = content[:_MAX_CONTENT_CHARS] + "\n\n[内容已截断]"
+        content = content[:_MAX_CONTENT_CHARS] + "\n\n[content truncated]"
     parts: list[str] = []
     if title:
         parts.append(f"# {title}\n")
@@ -79,7 +79,7 @@ class LocalFetchImpl(FetchImpl):
     """本地内容提取（readability + markdownify）。"""
 
     name = "local"
-    description = "本地提取"
+    description = "Local extraction"
     config: Config
 
     async def fetch(self, url: str, format: str = "markdown") -> str:
@@ -93,10 +93,10 @@ async def _local_fetch(self: LocalFetchImpl, url: str, format: str = "markdown")
     try:
         raw_html = await _httpx_get(url)
     except httpx.TimeoutException:
-        return f"读取超时（{_TIMEOUT}s）。请稍后重试。"
+        return f"Fetch timed out ({_TIMEOUT}s). Please try again later."
     except httpx.HTTPError as exc:
         logger.warning("Web fetch failed for %s: %s", url, exc)
-        return f"读取失败：{exc}"
+        return f"Fetch failed: {exc}"
 
     title, clean_html = _extract(raw_html, url)
 

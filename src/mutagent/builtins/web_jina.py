@@ -69,8 +69,8 @@ async def _jina_search(self: JinaSearchImpl, query: str, max_results: int = 5) -
             if resp.status_code in (401, 429):
                 body = resp.text[:500]
                 raise RuntimeError(
-                    f"Jina API HTTP {resp.status_code}。\n"
-                    f"响应：{body}"
+                    f"Jina API HTTP {resp.status_code}.\n"
+                    f"Response: {body}"
                 )
             resp.raise_for_status()
     except httpx.TimeoutException:
@@ -82,18 +82,18 @@ async def _jina_search(self: JinaSearchImpl, query: str, max_results: int = 5) -
     try:
         data = resp.json()
     except ValueError:
-        return "搜索返回了无法解析的响应。"
+        return "Search returned an unparseable response."
 
     items = data.get("data", [])
     if not items:
-        return f"没有找到与 \"{query}\" 相关的结果。"
+        return f"No results found for \"{query}\"."
 
     items = items[:max_results]
 
     parts: list[str] = []
-    parts.append(f"搜索结果：\"{query}\"（共 {len(items)} 条）\n")
+    parts.append(f"Search results for \"{query}\" ({len(items)} items)\n")
     for i, item in enumerate(items, 1):
-        title = item.get("title", "(无标题)")
+        title = item.get("title", "(untitled)")
         item_url = item.get("url", "")
         description = item.get("description", "")
         parts.append(f"### {i}. {title}")
@@ -126,7 +126,7 @@ class JinaFetchImpl(FetchImpl):
 async def _jina_fetch(self: JinaFetchImpl, url: str, format: str = "markdown") -> str:
     """Jina Reader API 实现。"""
     if format == "html":
-        return "Jina Reader API 不支持 html 格式。请使用 local 实现或 format=\"markdown\"。"
+        return "Jina Reader API does not support html format. Use local impl or format=\"markdown\"."
 
     reader_url = f"{_READER_API}{url}"
     headers = _get_headers(self.config)
@@ -137,8 +137,8 @@ async def _jina_fetch(self: JinaFetchImpl, url: str, format: str = "markdown") -
             if resp.status_code in (401, 429):
                 body = resp.text[:500]
                 raise RuntimeError(
-                    f"Jina API HTTP {resp.status_code}。\n"
-                    f"响应：{body}"
+                    f"Jina API HTTP {resp.status_code}.\n"
+                    f"Response: {body}"
                 )
             resp.raise_for_status()
     except httpx.TimeoutException:
@@ -152,7 +152,7 @@ async def _jina_fetch(self: JinaFetchImpl, url: str, format: str = "markdown") -
     except ValueError:
         content = resp.text
         if len(content) > _MAX_CONTENT_CHARS:
-            content = content[:_MAX_CONTENT_CHARS] + "\n\n[内容已截断]"
+            content = content[:_MAX_CONTENT_CHARS] + "\n\n[content truncated]"
         return content
 
     page = data.get("data", {})
@@ -160,7 +160,7 @@ async def _jina_fetch(self: JinaFetchImpl, url: str, format: str = "markdown") -
     content = page.get("content", "")
 
     if not content:
-        return f"无法提取 {url} 的内容。"
+        return f"Failed to extract content from {url}."
 
     parts: list[str] = []
     if title:

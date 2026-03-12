@@ -42,14 +42,14 @@ async def _httpx_get_raw(url: str) -> str:
             resp = await client.get(url, timeout=_TIMEOUT, follow_redirects=True)
             resp.raise_for_status()
     except httpx.TimeoutException:
-        return f"读取超时（{_TIMEOUT}s）。请稍后重试。"
+        return f"Fetch timed out ({_TIMEOUT}s). Please try again later."
     except httpx.HTTPError as exc:
         logger.warning("Web fetch failed for %s: %s", url, exc)
-        return f"读取失败：{exc}"
+        return f"Fetch failed: {exc}"
 
     content = resp.text
     if len(content) > _MAX_CONTENT_CHARS:
-        content = content[:_MAX_CONTENT_CHARS] + "\n\n[内容已截断]"
+        content = content[:_MAX_CONTENT_CHARS] + "\n\n[content truncated]"
     return f"# {url}\n\n{content}"
 
 
@@ -62,12 +62,12 @@ async def search(self: WebToolkit, query: str, max_results: int = 5, impl: str =
     """搜索 Web 并返回结果摘要。"""
     search_impls = _discover_impls(SearchImpl)
     if not search_impls:
-        return "没有可用的搜索实现。请确认已注册 SearchImpl。"
+        return "No search implementation available. Ensure a SearchImpl is registered."
     name = impl or "jina"
     impl_cls = search_impls.get(name)
     if impl_cls is None:
         available = ", ".join(search_impls.keys())
-        return f"未知搜索实现 \"{name}\"。可用：{available}"
+        return f"Unknown search impl \"{name}\". Available: {available}"
     instance = impl_cls(config=self.config)
     return await instance.search(query, max_results)
 
@@ -87,15 +87,15 @@ async def fetch(self: WebToolkit, url: str, format: str = "markdown", impl: str 
     fetch_impls = _discover_impls(FetchImpl)
     if not fetch_impls:
         return (
-            f"格式 \"{format}\" 需要内容提取依赖。\n"
-            "当前仅支持 format=\"raw\"（原始网页 HTML）。\n\n"
-            "安装本地提取：pip install mutagent[web-extract]"
+            f"Format \"{format}\" requires content extraction dependencies.\n"
+            "Currently only format=\"raw\" (raw HTML) is supported.\n\n"
+            "Install local extraction: pip install mutagent[web-extract]"
         )
     name = impl or "local"
     impl_cls = fetch_impls.get(name)
     if impl_cls is None:
         available = ", ".join(fetch_impls.keys())
-        return f"未知获取实现 \"{name}\"。可用：{available}"
+        return f"Unknown fetch impl \"{name}\". Available: {available}"
     instance = impl_cls(config=self.config)
     return await instance.fetch(url, format)
 
@@ -110,10 +110,10 @@ def _customize_schema(self: WebToolkit, method_name: str, schema: ToolSchema) ->
     if method_name == "search":
         impls = mutobj.discover_subclasses(SearchImpl)
         if impls:
-            impl_list = "、".join(f"{c.name}（{c.description}）" for c in impls)
-            desc = f"搜索 Web 并返回结果摘要。可用实现：{impl_list}。"
+            impl_list = ", ".join(f"{c.name} ({c.description})" for c in impls)
+            desc = f"Search the web and return result summaries. Available: {impl_list}."
         else:
-            desc = "搜索 Web 并返回结果摘要。（无可用搜索实现）"
+            desc = "Search the web and return result summaries. (no search impl available)"
         return ToolSchema(
             name=schema.name,
             description=desc,
@@ -124,23 +124,23 @@ def _customize_schema(self: WebToolkit, method_name: str, schema: ToolSchema) ->
         fetch_impls = mutobj.discover_subclasses(FetchImpl)
         props = dict(schema.input_schema.get("properties", {}))
         if fetch_impls:
-            impl_list = "、".join(f"{c.name}（{c.description}）" for c in fetch_impls)
-            desc = f"读取网页内容并返回文本。可用提取实现：{impl_list}。"
+            impl_list = ", ".join(f"{c.name} ({c.description})" for c in fetch_impls)
+            desc = f"Fetch web page content as text. Available: {impl_list}."
             props["format"] = {
                 "type": "string",
                 "description": (
-                    '输出格式 — "markdown"（默认）、'
-                    '"html"（提取后的正文）、"raw"（原始网页）。'
+                    'Output format — "markdown" (default), '
+                    '"html" (extracted body), "raw" (raw HTML).'
                 ),
                 "default": "markdown",
             }
             props["impl"] = {
                 "type": "string",
-                "description": f"提取实现（默认 \"{fetch_impls[0].name}\"）。",
+                "description": f"Extraction impl (default \"{fetch_impls[0].name}\").",
                 "default": "",
             }
         else:
-            desc = "读取原始网页内容（HTML）。"
+            desc = "Fetch raw web page content (HTML)."
             props.pop("format", None)
             props.pop("impl", None)
         new_input = dict(schema.input_schema)

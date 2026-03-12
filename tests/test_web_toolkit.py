@@ -120,7 +120,7 @@ class TestFetchImplDeclaration:
     def test_local_impl_has_name(self):
         from mutagent.builtins.web_local import LocalFetchImpl
         assert LocalFetchImpl.name == "local"
-        assert LocalFetchImpl.description == "本地提取"
+        assert LocalFetchImpl.description == "Local extraction"
 
     def test_jina_impl_has_name(self):
         from mutagent.builtins.web_jina import JinaFetchImpl
@@ -298,7 +298,7 @@ class TestJinaSearchImpl:
             block = ToolUseBlock(id="t1", name="Web-search", input={"query": "xyzzy123"})
             await tool_set.dispatch(block)
         assert not block.is_error
-        assert "没有找到" in block.result
+        assert "No results found" in block.result
 
     async def test_search_timeout(self, tool_set):
         mock_client = _make_mock_client_with_error(httpx.TimeoutException("timeout"))
@@ -306,7 +306,7 @@ class TestJinaSearchImpl:
             block = ToolUseBlock(id="t1", name="Web-search", input={"query": "test"})
             await tool_set.dispatch(block)
         assert block.is_error is True
-        assert "超时" in block.result
+        assert "timed out" in block.result
 
     async def test_search_request_error(self, tool_set):
         mock_client = _make_mock_client_with_error(
@@ -316,7 +316,7 @@ class TestJinaSearchImpl:
             block = ToolUseBlock(id="t1", name="Web-search", input={"query": "test"})
             await tool_set.dispatch(block)
         assert block.is_error is True
-        assert "搜索失败" in block.result
+        assert "Search failed" in block.result
 
     async def test_search_sends_api_key(self, toolkit_with_key):
         mock_resp = _mock_search_response([])
@@ -381,7 +381,7 @@ class TestFetchRaw:
             block = ToolUseBlock(id="t1", name="Web-fetch",
                                  input={"url": "https://example.com", "format": "raw"})
             await tool_set.dispatch(block)
-        assert "截断" in block.result
+        assert "truncated" in block.result
 
     async def test_raw_timeout(self, tool_set):
         mock_client = _make_mock_client_with_error(httpx.TimeoutException("timeout"))
@@ -389,7 +389,7 @@ class TestFetchRaw:
             block = ToolUseBlock(id="t1", name="Web-fetch",
                                  input={"url": "https://example.com", "format": "raw"})
             await tool_set.dispatch(block)
-        assert "超时" in block.result
+        assert "timed out" in block.result
 
     async def test_raw_http_error(self, tool_set):
         mock_client = _make_mock_client_with_error(
@@ -399,7 +399,7 @@ class TestFetchRaw:
             block = ToolUseBlock(id="t1", name="Web-fetch",
                                  input={"url": "https://example.com", "format": "raw"})
             await tool_set.dispatch(block)
-        assert "读取失败" in block.result
+        assert "Fetch failed" in block.result
 
 
 # ---------------------------------------------------------------------------
@@ -458,7 +458,7 @@ class TestLocalFetchImpl:
             block = ToolUseBlock(id="t1", name="Web-fetch",
                                  input={"url": "https://example.com"})
             await tool_set.dispatch(block)
-        assert "超时" in block.result
+        assert "timed out" in block.result
 
     async def test_fetch_http_error(self, tool_set):
         mock_client = _make_mock_client_with_error(
@@ -468,7 +468,7 @@ class TestLocalFetchImpl:
             block = ToolUseBlock(id="t1", name="Web-fetch",
                                  input={"url": "https://example.com"})
             await tool_set.dispatch(block)
-        assert "读取失败" in block.result
+        assert "Fetch failed" in block.result
 
 
 # ---------------------------------------------------------------------------
@@ -512,13 +512,13 @@ class TestJinaFetchImpl:
             block = ToolUseBlock(id="t1", name="Web-fetch",
                                  input={"url": "https://example.com", "impl": "jina"})
             await tool_set.dispatch(block)
-        assert "无法提取" in block.result
+        assert "Failed to extract" in block.result
 
     async def test_jina_fetch_html_not_supported(self, tool_set):
         block = ToolUseBlock(id="t1", name="Web-fetch",
                              input={"url": "https://example.com", "format": "html", "impl": "jina"})
         await tool_set.dispatch(block)
-        assert "不支持" in block.result
+        assert "does not support html" in block.result
 
 
 # ---------------------------------------------------------------------------
@@ -555,10 +555,10 @@ class TestProviderDispatch:
         block = ToolUseBlock(id="t1", name="Web-search",
                              input={"query": "test", "impl": "nonexistent"})
         await tool_set.dispatch(block)
-        assert "未知搜索实现" in block.result
+        assert "Unknown search impl" in block.result
 
     async def test_unknown_fetch_impl(self, tool_set):
         block = ToolUseBlock(id="t1", name="Web-fetch",
                              input={"url": "https://example.com", "impl": "nonexistent"})
         await tool_set.dispatch(block)
-        assert "未知获取实现" in block.result
+        assert "Unknown fetch impl" in block.result
