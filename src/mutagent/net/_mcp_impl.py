@@ -33,9 +33,40 @@ logger = logging.getLogger("mutagent.net.mcp")
 class MCPToolProvider:
     """generation 检查 + 懒刷新，桥接 Declaration 发现到 MCP handler。"""
 
-    def __init__(self) -> None:
+    def __init__(self, target_view: type[MCPView] | None = None) -> None:
         self._gen: int = -1
         self._tools: dict[str, tuple[MCPToolSet, str]] = {}
+        self._target_view = target_view
+        # 缓存 target_view 的 path（从实例获取，避免 AttributeDescriptor）
+        self._target_path: str = ""
+        if target_view is not None:
+            self._target_path = target_view().path
+
+    def _match_view(self, toolset: MCPToolSet) -> bool:
+        """检查 toolset 是否属于当前 view。
+
+        优先使用 view 属性匹配（精确），其次使用 path 属性匹配。
+        """
+        if self._target_view is None:
+            return True
+
+        # 优先检查 view 属性
+        toolset_view = toolset.view
+        if toolset_view is not None:
+            # 使用类名比较，避免 reload 导致的身份不匹配
+            target_name = self._target_view.__name__
+            if isinstance(toolset_view, tuple):
+                return any(v.__name__ == target_name for v in toolset_view)
+            return toolset_view.__name__ == target_name
+
+        # 回退到 path 匹配
+        toolset_path = toolset.path
+        if not toolset_path:
+            # 未指定 view 和 path 的 toolset 匹配所有 view
+            return True
+        if isinstance(toolset_path, tuple):
+            return self._target_path in toolset_path
+        return toolset_path == self._target_path
 
     def refresh(self) -> None:
         gen = mutobj.get_registry_generation()
@@ -44,6 +75,9 @@ class MCPToolProvider:
             self._tools = {}
             for cls in mutobj.discover_subclasses(MCPToolSet):
                 instance = cls()
+                # 过滤：只注册匹配当前 MCPView 的 toolset
+                if not self._match_view(instance):
+                    continue
                 prefix = instance.prefix
                 for name in dir(cls):
                     if name.startswith("_"):
@@ -87,6 +121,8 @@ class MCPToolProvider:
 
 def _infer_schema(fn: Any) -> dict[str, Any]:
     """从函数签名推断 JSON Schema（简易版）。"""
+    import typing
+
     sig = inspect.signature(fn)
     properties: dict[str, Any] = {}
     required: list[str] = []
@@ -98,12 +134,46 @@ def _infer_schema(fn: Any) -> dict[str, Any]:
         bool: "boolean",
     }
 
+    def _get_json_type(annotation: Any) -> dict[str, Any]:
+        """将 Python 类型注解转换为 JSON Schema 类型。"""
+        # 基本类型
+        if annotation in type_map:
+            return {"type": type_map[annotation]}
+
+        # 处理 typing 模块的泛型类型
+        origin = typing.get_origin(annotation)
+        args = typing.get_args(annotation)
+
+        # List[T] -> {"type": "array", "items": ...}
+        if origin is list:
+            if args:
+                return {"type": "array", "items": _get_json_type(args[0])}
+            return {"type": "array"}
+
+        # Dict[K, V] -> {"type": "object"}
+        if origin is dict:
+            return {"type": "object"}
+
+        # Optional[T] = Union[T, None]
+        if origin is typing.Union:
+            # 过滤掉 NoneType
+            non_none_args = [a for a in args if a is not type(None)]
+            if len(non_none_args) == 1:
+                return _get_json_type(non_none_args[0])
+            # 多个类型的 Union，降级为 object
+            return {"type": "object"}
+
+        # 未知类型默认为 string
+        return {"type": "string"}
+
     for name, param in sig.parameters.items():
         if name in ("self", "cls"):
             continue
         annotation = param.annotation
-        json_type = type_map.get(annotation, "string")
-        properties[name] = {"type": json_type}
+        if annotation is inspect.Parameter.empty:
+            properties[name] = {"type": "string"}
+        else:
+            properties[name] = _get_json_type(annotation)
         if param.default is inspect.Parameter.empty:
             required.append(name)
 
@@ -135,7 +205,7 @@ class _MCPSession:
 def _get_ext(view: MCPView) -> _MCPViewExt:
     ext = cast(_MCPViewExt, _MCPViewExt.get_or_create(view))
     if ext._tool_provider is None:
-        ext._tool_provider = MCPToolProvider()
+        ext._tool_provider = MCPToolProvider(target_view=type(view))
         ext._dispatch = JsonRpcDispatcher()
         _setup_handlers(ext, view)
     return ext

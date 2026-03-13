@@ -23,9 +23,10 @@ class MCPToolSet(mutobj.Declaration):
 
     ``prefix`` 为 tool name 前缀，如 prefix="fs" 则方法 read 注册为 "fs_read"。
     """
-    prefix: str = ""
-    view: type[MCPView] | tuple[type[MCPView], ...] | None = None
-    path: str | tuple[str, ...] = ""
+    # 不带注解，作为普通类变量，避免被 DeclarationMeta 转换为 AttributeDescriptor
+    prefix = ""  # type: str
+    view = None  # type: type[MCPView] | tuple[type[MCPView], ...] | None
+    path = ""  # type: str | tuple[str, ...]
 
 
 class MCPView(View):
