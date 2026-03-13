@@ -269,11 +269,15 @@ class HTTPProtocol(asyncio.Protocol):
         ws_protocol.data_received(raw_request)
 
     def _on_response_complete(self) -> None:
-        self.conn.start_next_cycle()
         self.cycle = None
         self.task = None
 
         if self._keep_alive:
+            try:
+                self.conn.start_next_cycle()
+            except h11.LocalProtocolError:
+                self.transport.close()
+                return
             self.flow.resume_reading()
             self._schedule_timeout()
             self._handle_events()

@@ -25,13 +25,14 @@ _TIMESTAMP_START_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
 
 # File naming patterns:
 # - server-YYYYMMDD_HHMMSS.log          (server log)
+# - supervisor-YYYYMMDD_HHMMSS.log      (supervisor log)
 # - session-YYYYMMDD_HHMMSS-HEXID.log   (session log)
 # - session-YYYYMMDD_HHMMSS-HEXID-api.jsonl (session API)
 # - YYYYMMDD_HHMMSS.log                 (mutagent standalone log)
 # - YYYYMMDD_HHMMSS-api.jsonl           (mutagent standalone API)
 _SESSION_FILE_RE = re.compile(
-    r"^((?:server-|session-)?\d{8}_\d{6}(?:-[0-9a-f]+)?)"  # prefix
-    r"(?:\.log|-api\.jsonl)$"                                # suffix
+    r"^((?:server-|supervisor-|session-)?\d{8}_\d{6}(?:-[0-9a-f]+)?)"  # prefix
+    r"(?:\.log|-api\.jsonl)$"                                           # suffix
 )
 
 # Level name → numeric value for comparison
@@ -447,6 +448,7 @@ def _extract_session_prefix(filename: str) -> str | None:
 
     Recognizes files like:
     - ``server-20260217_085924.log`` (server log)
+    - ``supervisor-20260217_085924.log`` (supervisor log)
     - ``session-20260217_085924-a1b2c3d4e5f6.log`` (session log)
     - ``session-20260217_085924-a1b2c3d4e5f6-api.jsonl`` (session API)
     - ``20260217_085924.log`` (mutagent standalone log)
