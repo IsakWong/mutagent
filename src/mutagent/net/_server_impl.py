@@ -60,6 +60,7 @@ class _ServerExt(mutobj.Extension[Server]):
     _routes: list[Any] = mutobj.field(default_factory=list)
     _static_dirs: list[tuple[str, Path]] = mutobj.field(default_factory=list)
     _gen: int = -1
+    _allowed_views: tuple[type, ...] | None = None  # 缓存的 views 限制
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +259,16 @@ class _Route:
         self.is_ws = is_ws
 
 
-def _discover_routes(ext: _ServerExt) -> None:
+def _is_view_allowed(ext: _ServerExt, view_cls: type) -> bool:
+    """检查 view 是否在 Server.views 限制范围内。"""
+    if ext._allowed_views is None:
+        return True
+    # 使用类名比较，避免 reload 导致的身份不匹配
+    allowed_names = {v.__name__ for v in ext._allowed_views}
+    return view_cls.__name__ in allowed_names
+
+
+def _discover_routes(ext: _ServerExt, server: Server) -> None:
     """从 Declaration 注册表发现 View/WebSocketView 子类，缓存路由。"""
     gen = mutobj.get_registry_generation()
     if gen == ext._gen:
@@ -266,8 +276,13 @@ def _discover_routes(ext: _ServerExt) -> None:
     ext._gen = gen
     ext._routes = []
     ext._static_dirs = []
+    # 缓存 views 限制
+    ext._allowed_views = server.views
 
     for view_cls in mutobj.discover_subclasses(View):
+        # 检查是否在 views 限制范围内
+        if not _is_view_allowed(ext, view_cls):
+            continue
         # StaticView 特殊处理 — 记录静态目录
         if issubclass(view_cls, StaticView):
             view = view_cls()
@@ -279,6 +294,9 @@ def _discover_routes(ext: _ServerExt) -> None:
             ext._routes.append(_Route(view.path, view, is_ws=False))
 
     for ws_cls in mutobj.discover_subclasses(WebSocketView):
+        # 检查是否在 views 限制范围内
+        if not _is_view_allowed(ext, ws_cls):
+            continue
         ws_view = ws_cls()
         if ws_view.path:
             ext._routes.append(_Route(ws_view.path, ws_view, is_ws=True))
@@ -394,7 +412,7 @@ async def _server_route(
 ) -> None:
     """ASGI 入口 — 路径匹配 + View/WebSocketView 自动发现 + 静态文件 fallback。"""
     ext = cast(_ServerExt, _ServerExt.get_or_create(self))
-    _discover_routes(ext)
+    _discover_routes(ext, self)
 
     scope_type = scope.get("type")
     path: str = scope.get("path", "/")

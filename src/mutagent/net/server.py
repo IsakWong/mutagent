@@ -98,9 +98,14 @@ class Server(mutobj.Declaration):
 
     自动发现 View/WebSocketView/StaticView 子类并路由分发。
     子类覆盖 on_startup/on_shutdown 实现生命周期管理。
+
+    子类可设置 ``views`` 限制只路由到指定的 View 子类（元组），
+    用于多 Server 实例避免路由冲突。
     """
     host: str = "127.0.0.1"
     port: int = 0
+    # 不带注解，作为普通类变量，避免被 DeclarationMeta 转换为 AttributeDescriptor
+    views = None  # type: tuple[type[View], ...] | None
 
     async def route(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         """ASGI 入口 — 自动发现 View/WebSocketView 并路径匹配分发。"""
