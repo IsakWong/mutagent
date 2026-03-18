@@ -104,11 +104,23 @@ class Server(mutobj.Declaration):
     """
     host: str = "127.0.0.1"
     port: int = 0
+    base_path: str = ""
     # 不带注解，作为普通类变量，避免被 DeclarationMeta 转换为 AttributeDescriptor
     views = None  # type: tuple[type[View], ...] | None
 
     async def route(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         """ASGI 入口 — 自动发现 View/WebSocketView 并路径匹配分发。"""
+        ...
+
+    async def before_route(self, scope: dict[str, Any], path: str) -> Response | None:
+        """路由前钩子 — 在路径匹配后、handler 调用前执行。
+
+        返回 None 表示放行，返回 Response 表示拦截。
+        HTTP 场景：直接发送该 Response（如 302 重定向）。
+        WebSocket 场景：关闭连接（使用 Response.status 作为关闭码）。
+
+        子类通过 @impl 覆盖以注入认证等逻辑。
+        """
         ...
 
     async def on_startup(self) -> None:

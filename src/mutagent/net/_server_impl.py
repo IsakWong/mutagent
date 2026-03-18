@@ -226,6 +226,11 @@ async def _server_on_shutdown(self: Server) -> None:
     pass
 
 
+@mutobj.impl(Server.before_route)
+async def _server_before_route(self: Server, scope: dict[str, Any], path: str) -> Response | None:
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Server @impl — route（吸收 Router 逻辑）
 # ---------------------------------------------------------------------------
@@ -417,10 +422,28 @@ async def _server_route(
     scope_type = scope.get("type")
     path: str = scope.get("path", "/")
 
+    # --- base_path strip ---
+    bp = self.base_path
+    if bp:
+        if path == bp or path.startswith(bp + "/"):
+            path = path[len(bp):] or "/"
+        else:
+            # 不匹配 base_path → 404
+            if scope_type == "websocket":
+                await send({"type": "websocket.close", "code": 4404, "reason": "Not found"})
+            elif scope_type == "http":
+                await _send_response(Response(status=404), send)
+            return
+
     # --- WebSocket ---
     if scope_type == "websocket":
         result = _match_route(ext, path, ws=True)
         if result:
+            # before_route 钩子
+            intercept = await self.before_route(scope, path)
+            if intercept is not None:
+                await send({"type": "websocket.close", "code": intercept.status, "reason": "Unauthorized"})
+                return
             ws_view, params = result
             ws_conn = _make_ws_connection(scope, receive, send, params)
             try:
@@ -433,6 +456,14 @@ async def _server_route(
 
     # --- HTTP ---
     if scope_type == "http":
+        # before_route 钩子（对所有 HTTP 请求，含静态文件）
+        intercept = await self.before_route(scope, path)
+        if intercept is not None:
+            if isinstance(intercept, StreamingResponse):
+                await _send_streaming_response(intercept, send)
+            else:
+                await _send_response(intercept, send)
+            return
         result = _match_route(ext, path, ws=False)
         if result:
             view, params = result
