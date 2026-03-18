@@ -575,7 +575,7 @@ class WSProtocol(asyncio.Protocol):
             self._enqueue({"type": "websocket.receive", "text": text})
 
     def _handle_bytes(self, event: ws_events.BytesMessage) -> None:
-        self._bytes_buffer.append(event.data)
+        self._bytes_buffer.append(bytes(event.data))
         if event.message_finished:
             data = b"".join(self._bytes_buffer)
             self._bytes_buffer.clear()

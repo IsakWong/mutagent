@@ -32,7 +32,7 @@ class Server:
         self.app = app
         self.root_path = root_path
 
-        self._servers: list[asyncio.AbstractServer] = []
+        self._servers: list[asyncio.Server] = []
         self._server_state: dict[str, Any] = {
             "connections": set(),
         }
