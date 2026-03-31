@@ -104,6 +104,7 @@ class HTTPProtocol(asyncio.Protocol):
 
         self._keep_alive = True
         self._timeout_handle: asyncio.TimerHandle | None = None
+        self._proxy_header_parsed = False
 
     # --- asyncio.Protocol callbacks ---
 
@@ -141,8 +142,43 @@ class HTTPProtocol(asyncio.Protocol):
 
     def data_received(self, data: bytes) -> None:
         self._cancel_timeout()
+        if not self._proxy_header_parsed:
+            data = self._try_parse_proxy_header(data)
+            if not data:
+                # PROXY header 单独到达，剩余数据为空，等待下次 data_received
+                # 注意：h11 将 receive_data(b"") 视为 EOF 信号，不能传入空 bytes
+                return
         self.conn.receive_data(data)
         self._handle_events()
+
+    def _try_parse_proxy_header(self, data: bytes) -> bytes:
+        """检测并解析 PROXY protocol v1 头，返回剩余数据。
+
+        格式: PROXY TCP4 <src_ip> <dst_ip> <src_port> <dst_port>\\r\\n
+        不以 'PROXY ' 开头时原样返回（兼容无代理的直连场景）。
+        """
+        self._proxy_header_parsed = True
+        if not data.startswith(b"PROXY "):
+            return data
+        end = data.find(b"\r\n")
+        if end == -1:
+            logger.warning("Incomplete PROXY protocol header, ignoring")
+            return data
+        line = data[:end].decode("ascii", errors="replace")
+        rest = data[end + 2:]
+        parts = line.split()
+        # PROXY TCP4 src_ip dst_ip src_port dst_port
+        if len(parts) >= 6 and parts[1] in ("TCP4", "TCP6"):
+            src_ip = parts[2]
+            try:
+                src_port = int(parts[4])
+            except ValueError:
+                src_port = 0
+            self.client = (src_ip, src_port)
+            logger.debug("PROXY protocol: client=%s:%d", src_ip, src_port)
+        else:
+            logger.warning("Malformed PROXY protocol header: %s", line)
+        return rest
 
     def eof_received(self) -> bool | None:
         return False
