@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 from urllib.parse import unquote
 
@@ -12,6 +13,7 @@ import wsproto
 import wsproto.events as ws_events
 
 logger = logging.getLogger("mutagent.net.protocol")
+access_logger = logging.getLogger("mutagent.net.access")
 
 # ---------------------------------------------------------------------------
 # SSE
@@ -268,6 +270,14 @@ class HTTPProtocol(asyncio.Protocol):
         ws_protocol.connection_made(self.transport)
         ws_protocol.data_received(raw_request)
 
+        real_ip = scope.get("real_client_ip")
+        if real_ip:
+            addr = real_ip
+        else:
+            client = self.client
+            addr = f"{client[0]}:{client[1]}" if client else "-"
+        access_logger.info('%s - "WebSocket %s"', addr, path)
+
     def _on_response_complete(self) -> None:
         self.cycle = None
         self.task = None
@@ -329,6 +339,7 @@ class RequestResponseCycle:
         "_body", "_body_event", "_more_body",
         "disconnected", "response_started", "response_complete",
         "_chunked", "_expected_content_length",
+        "_start_time", "_status_code", "_response_body_size",
     )
 
     def __init__(
@@ -355,6 +366,9 @@ class RequestResponseCycle:
         self.response_complete = False
         self._chunked = False
         self._expected_content_length: int | None = None
+        self._start_time = time.perf_counter()
+        self._status_code = 0
+        self._response_body_size = 0
 
     async def run(self, app: Any) -> None:
         try:
@@ -408,6 +422,7 @@ class RequestResponseCycle:
     async def _send_response_start(self, message: dict[str, Any]) -> None:
         self.response_started = True
         status_code: int = message["status"]
+        self._status_code = status_code
         headers: list[tuple[bytes, bytes]] = message.get("headers", [])
 
         has_content_length = False
@@ -441,6 +456,7 @@ class RequestResponseCycle:
         more_body: bool = message.get("more_body", False)
 
         if body:
+            self._response_body_size += len(body)
             try:
                 data = self.conn.send(h11.Data(data=body))
             except h11.LocalProtocolError:
@@ -456,11 +472,14 @@ class RequestResponseCycle:
             else:
                 self.transport.write(data)
 
+            self._log_access()
             self.response_complete = True
             self.on_response_complete()
 
     def _send_500(self) -> None:
         body = b"Internal Server Error"
+        self._status_code = 500
+        self._response_body_size = len(body)
         try:
             response = self.conn.send(h11.Response(
                 status_code=500,
@@ -473,6 +492,25 @@ class RequestResponseCycle:
             self.transport.write(response + data_bytes + end)
         except h11.LocalProtocolError:
             pass
+        self._log_access()
+
+    def _log_access(self) -> None:
+        real_ip = self.scope.get("real_client_ip")
+        if real_ip:
+            addr = real_ip
+        else:
+            client = self.scope.get("client")
+            addr = f"{client[0]}:{client[1]}" if client else "-"
+        method = self.scope.get("method", "-")
+        path = self.scope.get("path", "/")
+        version = self.scope.get("http_version", "1.1")
+        elapsed_ms = (time.perf_counter() - self._start_time) * 1000
+        size = self._expected_content_length if self._expected_content_length is not None else self._response_body_size
+        access_logger.info(
+            '%s - "%s %s HTTP/%s" %d %d %.0fms',
+            addr, method, path, version,
+            self._status_code, size, elapsed_ms,
+        )
 
 
 def _reconstruct_raw_request(event: h11.Request) -> bytes:
