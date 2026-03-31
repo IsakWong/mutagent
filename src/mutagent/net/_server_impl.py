@@ -357,6 +357,12 @@ def _make_ws_connection(
     scope: dict[str, Any], receive: Any, send: Any, path_params: dict[str, str],
 ) -> WebSocketConnection:
     """从 ASGI scope 构造 WebSocketConnection，通过 Extension 附加 ASGI 回调。"""
+    raw_headers = scope.get("headers", [])
+    headers = {
+        k.decode("latin-1"): v.decode("latin-1")
+        for k, v in raw_headers
+    }
+
     qs = scope.get("query_string", b"")
     if isinstance(qs, bytes):
         qs = qs.decode("latin-1")
@@ -367,6 +373,7 @@ def _make_ws_connection(
         path=scope.get("path", "/"),
         query_params=query_params,
         path_params=path_params,
+        headers=headers,
     )
     ext = _WebSocketExt.get_or_create(ws)
     ext._receive = receive

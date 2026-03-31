@@ -69,6 +69,7 @@ class WebSocketConnection(mutobj.Declaration):
     path: str = "/"
     query_params: dict[str, str] = mutobj.field(default_factory=dict)
     path_params: dict[str, str] = mutobj.field(default_factory=dict)
+    headers: dict[str, str] = mutobj.field(default_factory=dict)
 
     async def accept(self) -> None: ...
 
