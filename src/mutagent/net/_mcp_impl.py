@@ -119,6 +119,70 @@ class MCPToolProvider:
         return ToolResult.text(str(result))
 
 
+def _parse_docstring_args(docstring: str) -> dict[str, str]:
+    """从 Google-style docstring 的 Args 段落提取参数描述。
+
+    解析规则：
+    - 找到 ``Args:`` 行后，逐行匹配 ``param_name: description`` 格式
+    - 缩进更深的后续行视为续行，用换行符拼接
+    - 遇到缩进回退（如 ``Returns:``）则结束 Args 段
+
+    返回 ``{参数名: 描述文本}`` 字典；解析失败时返回空字典。
+    """
+    lines = docstring.splitlines()
+    descriptions: dict[str, str] = {}
+
+    # 1. 找到 "Args:" 行
+    args_start = -1
+    args_indent = 0
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("Args:"):
+            args_start = i + 1
+            args_indent = len(line) - len(stripped)
+            break
+    if args_start < 0:
+        return descriptions
+
+    # 2. 逐行解析参数
+    current_param: str | None = None
+    current_lines: list[str] = []
+    param_indent = 0
+
+    def _flush() -> None:
+        if current_param and current_lines:
+            descriptions[current_param] = "\n".join(current_lines)
+
+    for i in range(args_start, len(lines)):
+        line = lines[i]
+        # 空行跳过
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        # 缩进 <= args_indent 说明 Args 段结束（如遇到 Returns:）
+        if indent <= args_indent and line.strip():
+            break
+        # 尝试匹配新参数行: "    param_name: description"
+        content = line.strip()
+        colon_pos = content.find(":")
+        if colon_pos > 0 and indent <= args_indent + 8:
+            candidate = content[:colon_pos].strip()
+            # 参数名不含空格且是合法标识符
+            if candidate.isidentifier():
+                _flush()
+                current_param = candidate
+                param_indent = indent
+                desc_text = content[colon_pos + 1:].strip()
+                current_lines = [desc_text] if desc_text else []
+                continue
+        # 续行：缩进 > 当前参数缩进
+        if current_param and indent > param_indent:
+            current_lines.append(content)
+
+    _flush()
+    return descriptions
+
+
 def _infer_schema(fn: Any) -> dict[str, Any]:
     """从函数签名推断 JSON Schema（简易版）。"""
     import typing
@@ -180,6 +244,15 @@ def _infer_schema(fn: Any) -> dict[str, Any]:
     schema: dict[str, Any] = {"type": "object", "properties": properties}
     if required:
         schema["required"] = required
+
+    # 从 docstring Args 提取参数描述
+    docstring = getattr(fn, "__doc__", None) or ""
+    if docstring:
+        arg_descs = _parse_docstring_args(docstring)
+        for pname, desc in arg_descs.items():
+            if pname in properties and desc:
+                properties[pname]["description"] = desc
+
     return schema
 
 
